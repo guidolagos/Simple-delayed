@@ -6,3 +6,5 @@ logs/*
 !logs/.gitkeep
 *.jl.*.cov
 *.jl.mem
+# temporary files of atomic writes
+*.tmp.*
