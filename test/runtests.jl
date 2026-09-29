@@ -106,7 +106,6 @@ end
     systems = load_systems("yeh2024")
 
     @testset "Yeh et al. (2024) data files" begin
-        @test length(systems) == 22
         @test [s.id for s in systems] == collect(1:20)
         @test [ncomponents(s) for s in systems] ==
               [5, 8, 8, 9, 12, 14, 21, 13, 12, 12, 12, 13, 30, 26, 14, 21, 27, 22, 30, 24]
