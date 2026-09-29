@@ -1,20 +1,20 @@
 #!/bin/bash
-# Structural signatures of the 22 systems of Yeh et al. (2024).
-# One array task per system; task id = system id (1..22).
+# Structural signatures of the 20 systems of Yeh et al. (2024).
+# One array task per system; task id = system id (1..20).
 #
 # Submit from the repository root:
 #   sbatch templates/signatures.sbatch
 # Re-submitting is safe: systems whose data/signatures/<name>.csv exists are skipped.
-# To run only some systems:  sbatch --array=13,19,21 templates/signatures.sbatch
+# To run only some systems:  sbatch --array=6,7 templates/signatures.sbatch
 #
-# Cost: 2^n connectivity checks. n <= 24 takes seconds; the three n = 30
-# systems (13, 19, 21) take a few minutes on one core.
+# Cost: 2^n connectivity checks. n <= 27 takes under half a minute; the two n = 30
+# systems (13, 19) take 2-3 minutes on one core.
 #SBATCH --job-name=signatures
 #SBATCH --partition=compute-slim
-#SBATCH --array=1-22
+#SBATCH --array=1-20
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=1G
+#SBATCH --mem=512M
 #SBATCH --time=01:00:00
 #SBATCH --output=logs/%x_%A_%a.out
 

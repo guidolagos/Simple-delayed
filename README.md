@@ -24,8 +24,10 @@ compiling the package at the same time.
 The systems of Yeh et al. (2024) (`\cite{yeh2024new}`; Figure `fig:yeh` of
 the subsystems paper) are two-terminal networks: the **components are the
 edges**, and the system works iff there is a path of working edges from
-`Start` to `End`. Systems 6 and 7 (labels `6D`, `7D`) are directed; the
-others are undirected.
+`Start` to `End`. We use the 20 benchmark networks of Yeh et al. (2024),
+all undirected, as in their computations. `data/systems/README.md` documents
+the differences with the raw file (systems 21 and 22 dropped as duplicates;
+systems 6 and 7 read as undirected) and the checks against Table 9 of Yeh et al.
 
 Data files (`data/systems/`):
 
@@ -37,7 +39,9 @@ Data files (`data/systems/`):
   Component `e` of a system is its `e`-th edge in the raw file; in a state,
   bit `e-1` is 1 iff component `e` works.
 
-The test suite checks that the CSV files coincide with the raw file.
+The test suite checks that the CSV files coincide with the raw file (except
+for the documented differences) and that the numbers of minimal cuts agree
+with Table 9 of Yeh et al. (2024).
 
 Compute the signatures on the cluster (one array task per system; existing
 outputs are skipped, so re-submitting is safe):

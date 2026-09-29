@@ -4,8 +4,8 @@ system,name,label,directed,source,target,n_components,n_nodes
 3,yeh2024_03,3,false,Start,End,8,5
 4,yeh2024_04,4,false,Start,End,9,6
 5,yeh2024_05,5,false,Start,End,12,9
-6,yeh2024_06,6D,true,Start,End,14,7
-7,yeh2024_07,7D,true,Start,End,21,11
+6,yeh2024_06,6D,false,Start,End,14,7
+7,yeh2024_07,7D,false,Start,End,21,11
 8,yeh2024_08,8,false,Start,End,13,9
 9,yeh2024_09,9,false,Start,End,12,8
 10,yeh2024_10,10,false,Start,End,12,8
@@ -19,5 +19,3 @@ system,name,label,directed,source,target,n_components,n_nodes
 18,yeh2024_18,18,false,Start,End,22,13
 19,yeh2024_19,19,false,Start,End,30,20
 20,yeh2024_20,20,false,Start,End,24,16
-21,yeh2024_21,21,false,Start,End,30,16
-22,yeh2024_22,22,false,Start,End,23,13
