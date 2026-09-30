@@ -8,6 +8,9 @@ const SIGNATURES_DIR = joinpath(DATA_DIR, "signatures")
 
 include("systems.jl")
 include("signatures.jl")
+include("models.jl")
+include("ltmc.jl")
+include("grid.jl")
 
 # systems
 export TwoTerminalSystem, ncomponents, nnodes, load_systems, get_system, parse_yeh_raw
@@ -16,6 +19,10 @@ export CompiledSystem, compile_system, works, state_from_working,
        count_working_states, tail_signature, signature, check_counts,
        signature_path, write_signature_file, read_signature_file
 
-# TODO: LTMC formulas for delayed r-out-of-n policies, simulation
+# LFMO models, LTMC of the delayed r-out-of-n policy, experiment grid
+export MODELS, LFMOModel, lfmo_model, psi, transition_rates, mean_batch,
+       Delay, policy_quantities, ltmc, COST_RATIOS, COST_SETUPS,
+       make_grid, write_grid, read_grid, run_row, row_output_path, read_row_output,
+       GRID_PATH, OUTPUT_DIR
 
 end # module

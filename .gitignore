@@ -8,3 +8,4 @@ logs/*
 *.jl.mem
 # temporary files of atomic writes
 *.tmp.*
+__pycache__/

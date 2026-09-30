@@ -73,6 +73,25 @@ function read_reference(path)
     return ref
 end
 
+
+function read_ltmc_reference(path)
+    header, rows = SimpleDelayed.read_simple_csv(path)
+    cases = Dict{Tuple{Int,String,String,String,String},Vector{NTuple{4,Float64}}}()
+    for r in rows
+        key = (parse(Int, r[1]), r[2], r[3], r[4], r[5])
+        push!(get!(cases, key, NTuple{4,Float64}[]),
+              (parse(Float64, r[6]), parse(Float64, r[7]), parse(Float64, r[8]), parse(Float64, r[9])))
+    end
+    return cases
+end
+
+quantities(sysid, model, beta, kind, value; systems) = begin
+    sys = get_system(systems, sysid)
+    s = Float64.(read_signature_file(signature_path(sys)).s)
+    R, ex = transition_rates(lfmo_model(model, beta), ncomponents(sys))
+    policy_quantities(s, R, ex, Delay(kind, value))
+end
+
 @testset "SimpleDelayed" begin
 
     @testset "known signatures" begin
@@ -163,5 +182,138 @@ end
         @test r.s == [0, 1 // 5, 3 // 5, 1 // 5, 0]
         @test r.meta["name"] == "yeh2024_01"
         @test readdir(dir) == ["bridge.csv"]          # no leftover temporary file
+    end
+
+    @testset "LFMO models: calibration by the pairwise beta factor" begin
+        for name in MODELS[2:end], b in ("0.01", "0.05", "0.1", "0.2", "0.5")
+            m = lfmo_model(name, b)
+            @test abs(psi(m, 1) - 1) < 1e-60
+            @test abs(2 - psi(m, 2) - parse(BigFloat, b)) < 1e-60
+            @test psi(m, 0) == 0
+        end
+        # closed forms of the parameter
+        @test Float64(lfmo_model("LFMO-C", "0.2").param) ≈ 0.2 / 1.8
+        @test Float64(lfmo_model("BFR", "0.2").param) == 0.2
+        @test Float64(lfmo_model("LSh", "0.2").param) == 0.2
+        @test Float64(lfmo_model("LFMO-S", "0.5").param) ≈ log2(1.5)
+        # beta = 1/2 gives eta = (sqrt(5)-1)/2 for Gamma and 1/sqrt(12) for inverse Gaussian
+        @test Float64(lfmo_model("LFMO-G", "0.5").param) ≈ (sqrt(5) - 1) / 2
+        @test Float64(lfmo_model("LFMO-IG", "0.5").param) ≈ 1 / sqrt(12)
+        # the subsystems-paper parameters: 10x/(x+9), log(1+x(e-1)), sqrt(2x+1/4)-1/2, sqrt(x)
+        @test Float64(lfmo_model("LFMO-C", string(2 - 20 / 11)).param) ≈ 0.1
+        # inverse Gaussian cannot exceed beta = 2 - sqrt(2)
+        @test_throws ErrorException lfmo_model("LFMO-IG", "0.6")
+        @test_throws ErrorException lfmo_model("Exp", "0.1")
+        @test_throws ErrorException lfmo_model("LFMO-C", "0")
+    end
+
+    @testset "transition rates of the survivor-count chain" begin
+        n = 30
+        for name in MODELS, b in (name == "Exp" ? ("0",) : ("0.01", "0.5"))
+            m = lfmo_model(name, b)
+            R, ex = transition_rates(m, n)
+            @test all(>=(0), R)
+            for c in 0:(n - 1)
+                @test isapprox(sum(R[c + 1, :]), ex[c + 1]; rtol = 1e-13)
+                @test ex[c + 1] ≈ Float64(psi(m, n - c))
+                # mean batch = w Ψ(1) / Ψ(w)
+                w = n - c
+                @test isapprox(sum((f) * R[c + 1, c + f + 1] for f in 1:w) / ex[c + 1], mean_batch(m, w); rtol = 1e-12)
+            end
+        end
+        # iid exponential: single failures only
+        R, ex = transition_rates(lfmo_model("Exp", "0"), 6)
+        @test all(R[c + 1, c2 + 1] == (c2 == c + 1 ? 6 - c : 0) for c in 0:5, c2 in 0:6)
+        # lethal shock: drift (1-θ) per component plus killing θ of all survivors
+        R, ex = transition_rates(lfmo_model("LSh", "0.2"), 5)
+        @test R[1, 2] ≈ 5 * 0.8 && R[1, 6] ≈ 0.2 && all(abs(R[1, j]) < 1e-15 for j in 3:5)
+        # BFR: binomial batches, shock rate 1/p
+        R, ex = transition_rates(lfmo_model("BFR", "0.2"), 4)
+        @test all(R[1, f + 1] ≈ binomial(4, f) * 0.2^f * 0.8^(4 - f) / 0.2 for f in 1:4)
+    end
+
+    @testset "LTMC quantities: known cases (iid exponential, no delay)" begin
+        # bridge system (system 1): s = (0, 1/5, 3/5, 1/5, 0); E T_{k:5} = sum_{i=5-k+1}^{5} 1/i
+        pf, en, et = quantities(1, "Exp", "0", "none", 0; systems = systems)
+        ET = cumsum([1 / i for i in 5:-1:1])
+        @test pf ≈ [0, 0.2, 0.8, 1, 1]
+        # single failures: N(T_rep) = min(r, K) with P(K = k) = s_k
+        @test en ≈ [1, 2, 2.8, 3, 3]
+        @test et[1] ≈ ET[1]
+        @test et[5] ≈ 0.2 * ET[2] + 0.6 * ET[3] + 0.2 * ET[4]
+        # series system of n components: fails at the first failure, whatever r and delay
+        sys = mksys([("Start", "a"), ("a", "b"), ("b", "End")])
+        s = Float64.(signature(count_working_states(sys)))
+        R, ex = transition_rates(lfmo_model("LFMO-G", "0.2"), 3)
+        for d in (Delay(:none, 0), Delay(:exp, 0.3), Delay(:det, 0.3), Delay(:insp, 0.3))
+            pf, en, et = policy_quantities(s, R, ex, d)
+            @test all(≈(1), pf)
+            @test all(≈(1 / ex[1]), et)
+        end
+    end
+
+    @testset "LTMC quantities vs. closed forms of the paper (test/reference)" begin
+        ref = read_ltmc_reference(joinpath(@__DIR__, "reference", "ltmc_reference.csv"))
+        @test length(ref) == 43
+        for ((sysid, model, beta, kind, value), vals) in ref
+            pf, en, et = quantities(sysid, model, beta, kind, parse(Float64, value); systems = systems)
+            for (r, p, e, t) in vals
+                r = Int(r)
+                @test isapprox(pf[r], p; rtol = 1e-10, atol = 1e-13)
+                @test isapprox(en[r], e; rtol = 1e-10)
+                @test isapprox(et[r], t; rtol = 1e-10)
+            end
+        end
+    end
+
+    @testset "LTMC quantities: vanishing delays recover the no-delay case" begin
+        for (sysid, model, beta) in ((5, "BFR", "0.5"), (13, "LFMO-S", "0.2"), (19, "LSh", "0.1"))
+            base = quantities(sysid, model, beta, "none", 0; systems = systems)
+            for (kind, d, tol) in (("exp", 1e-9, 1e-6), ("det", 1e-9, 1e-6), ("insp", 1e-8, 1e-5))
+                q = quantities(sysid, model, beta, kind, d; systems = systems)
+                @test all(isapprox.(q[1], base[1]; atol = tol))
+                @test all(isapprox.(q[2], base[2]; rtol = tol))
+                @test all(isapprox.(q[3], base[3]; rtol = tol))
+            end
+            # longer delays: more system failures and more failed components at the repair
+            short = quantities(sysid, model, beta, "det", 0.01; systems = systems)
+            long = quantities(sysid, model, beta, "det", 0.3; systems = systems)
+            @test all(long[1] .>= short[1] .- 1e-12)
+            @test all(long[2] .>= short[2] .- 1e-12)
+        end
+    end
+
+    @testset "LTMC and cost ratio" begin
+        pf, en, et = [0.5, 1.0], [1.0, 2.0], [1.0, 2.0]
+        # ratio = n c_cmp/c_sys = 1, n = 2, c_sys = 1: c_cmp = 1/2
+        @test ltmc(pf, en, et, 2; ratio = 1.0) ≈ [(0.5 * 1 + 0.5) / 1, (0.5 * 2 + 1) / 2]
+        # plus a setup cost of 0.1 c_sys per repair visit
+        @test ltmc(pf, en, et, 2; ratio = 1.0, setup = 0.1) ≈ [(0.1 + 0.5 * 1 + 0.5) / 1, (0.1 + 0.5 * 2 + 1) / 2]
+        # iid exponential, proportional cost, no delay: repairing at every failure costs
+        # c_cmp per failure, i.e. LTMC(1) = n c_cmp / (component mean life) = ratio
+        q = quantities(5, "Exp", "0", "none", 0; systems = systems)
+        @test ltmc(q..., 12; ratio = 4.0)[1] ≈ 4.0
+        @test ltmc(q..., 12; ratio = 0.25)[1] ≈ 0.25
+        # ratio scales the component term: c_cmp = ratio c_sys / n
+        @test ltmc([0.0], [3.0], [1.0], 6; ratio = 2.0) ≈ [3.0 * 2.0 / 6]
+    end
+
+    @testset "experiment grid and row output" begin
+        grid = read_grid()
+        @test length(grid) == 20 * 31 * 16
+        @test all(Tuple(a) == Tuple(b) for (a, b) in zip(grid, make_grid()))
+        @test [g.row_id for g in grid] == collect(1:length(grid))
+        dir = mktempdir()
+        cache = Dict()
+        row = grid[findfirst(g -> g.system == 1 && g.model == "LFMO-C" && g.beta == "0.2" &&
+                                  g.delay_type == "exp" && g.delay == "0.1", grid)]
+        @test run_row(row; systems = systems, dir = dir, cache = cache) == :done
+        @test run_row(row; systems = systems, dir = dir, cache = cache) == :skipped
+        out = read_row_output(row_output_path(row.row_id; dir = dir))
+        ref = read_ltmc_reference(joinpath(@__DIR__, "reference", "ltmc_reference.csv"))[(1, "LFMO-C", "0.2", "exp", "0.1")]
+        @test out.r == 1:5
+        @test isapprox(out.p_fail, [v[2] for v in ref]; rtol = 1e-10)
+        @test out.meta["model"] == "LFMO-C"
+        @test length(readdir(dir)) == 1                    # no leftover temporary file
     end
 end
