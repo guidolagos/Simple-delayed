@@ -253,6 +253,43 @@ function policy_quantities(s::AbstractVector{<:Real}, R::Matrix{Float64}, exits:
 end
 
 """
+    policy_quantities_r0(s, R, exits, delay) -> (p_fail, e_nfail, e_trep)
+
+The same three quantities for r = 0 (Definition def:policy and Remark rmk:call0
+of the paper): the crew is called at time 0, right after the previous repair,
+and arrives after the delay unless the system fails before. Only meaningful
+with continuous inspection and a positive delay, i.e. `delay.kind` in
+(:exp, :det). It is the delay phase of `policy_quantities` started at count 0.
+"""
+function policy_quantities_r0(s::AbstractVector{<:Real}, R::Matrix{Float64}, exits::Vector{Float64},
+                              delay::Delay)
+    delay.kind in (:exp, :det) || error("r = 0 needs continuous inspection with a delay (exp or det), got $(delay.kind)")
+    n = length(s)
+    size(R) == (n + 1, n + 1) && length(exits) == n + 1 || error("rates are not for n = $(n) components")
+    N = n + 1
+    pf = 0.0; en = 0.0; et = 0.0
+    for k in 1:n
+        sk = Float64(s[k])
+        sk == 0 && continue
+        Q = _frozen_generator(R, exits, k)
+        Mst, F = delay.kind == :exp ? _resolvent(Q, k, 1 / delay.value) :
+                                      _uniformize(Q, k, exits[1], delay.value)
+        a = 0.0; b = 0.0; c_ = 0.0
+        for c in k:(N - 1)
+            a += Mst[1, c + 1]
+        end
+        for c in 0:(N - 1)
+            b += c * Mst[1, c + 1]
+        end
+        for c in 0:(k - 1)
+            c_ += F[1, c + 1]
+        end
+        pf += sk * a; en += sk * b; et += sk * c_
+    end
+    return pf, en, et
+end
+
+"""
     ltmc(p_fail, e_nfail, e_trep, n; ratio, setup = 0.0, c_sys = 1.0) -> Vector{Float64}
 
 Long-term mean cost for each trigger r, with repair cost

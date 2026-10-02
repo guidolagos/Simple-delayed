@@ -18,6 +18,8 @@ Usage (from the repository root; needs python3 with mpmath and numpy):
 
 For every (system, model, beta, delay, r) the CSV gives, for one renewal cycle
 under the policy (the paper's notation, Theorem thm:repairdelay):
+r = 0..n for exponential and deterministic delays (r = 0: the crew is called at time 0,
+with the paper's conventions T_{0:n} := 0 and P(N(T_{0:n}) = l) = 1{l = 0}), r = 1..n otherwise:
     p_fail = P(T_rep = T_fail)          (system failed before the repair started)
     e_nfail = E[N(T_rep)]               (number of failed components at the repair)
     e_trep = E[T_rep]                   (cycle length)
@@ -244,7 +246,7 @@ def main():
         name = f"yeh2024_{system:02d}"
         s = load_signature(name); n = len(s)
         a = calibrate(model, beta); Psi = psi_fun(model, a)
-        for r in range(1, n + 1):
+        for r in range(0 if dtype in ("exp", "det") else 1, n + 1):   # r = 0: crew called at time 0
             pf, en, et = policy_closed(s, Psi, n, r, dtype, mpf(d))
             rows.append([system, model, beta, dtype, d, r,
                          mp.nstr(pf, 17), mp.nstr(en, 17), mp.nstr(et, 17)])

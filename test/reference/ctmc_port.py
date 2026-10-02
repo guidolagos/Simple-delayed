@@ -50,7 +50,7 @@ def unif(Q, rows, q, t, one, exp_, expm1_):
         F[i][i] = t * one if Q[i][i] == 0 else expm1_(Q[i][i] * t) / Q[i][i]
     return E, F
 
-def policy_ctmc(s, Psi, n, dtype, d, num="float"):
+def policy_ctmc(s, Psi, n, dtype, d, num="float", r0=False):
     if num == "float":
         one, exp_, expm1_ = 1.0, math.exp, math.expm1
         conv = float
@@ -83,6 +83,11 @@ def policy_ctmc(s, Psi, n, dtype, d, num="float"):
             Mst = [[g * x for x in row] for row in X]; F = X
         elif dtype in ("det", "insp"):
             Mst, F = unif(Q, rows, ex[0], d, one, exp_, expm1_)
+        if r0:                                  # r = 0: call at time 0 (continuous inspection only)
+            assert dtype in ("exp", "det")
+            out[0][0] += sk * sum(Mst[0][c] for c in range(k, N))
+            out[0][1] += sk * sum(c * Mst[0][c] for c in range(N))
+            out[0][2] += sk * sum(F[0][c] for c in range(k))
         for r in range(1, n + 1):
             m = min(r, k)
             if dtype == "insp":
@@ -111,7 +116,7 @@ def policy_ctmc(s, Psi, n, dtype, d, num="float"):
                         Bv += h[c0] * sum(c * Mst[c0][c] for c in range(N))
                         C += h[c0] * sum(F[c0][c] for c in range(k))
             out[r][0] += sk * A; out[r][1] += sk * Bv; out[r][2] += sk * C
-    return out[1:]
+    return out if r0 else out[1:]
 
 if __name__ == "__main__":
     import time

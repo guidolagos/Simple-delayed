@@ -1,13 +1,18 @@
 # Experiment grid and per-row processing.
 #
 # data/grid.csv has one row per (system, model, beta, delay). Each row writes
-# output/ltmc/row_<row_id>.csv atomically, with one line per trigger r = 1..n;
-# rows whose output file exists are skipped, so array jobs are resumable.
+# output/ltmc/row_<row_id>.csv atomically, with one line per trigger r = 1..n,
+# plus r = 0 (call the crew right after each repair) when the delay is
+# exponential or deterministic (continuous inspection; Remark rmk:call0 of the
+# paper); rows whose output file exists are skipped, so array jobs are resumable.
 # The cost ratio n c_cmp/c_sys is not a grid dimension: the LTMC for any cost
 # is computed afterwards from (p_fail, e_nfail, e_trep) by scripts/summarize.jl.
 
 const GRID_PATH = joinpath(DATA_DIR, "grid.csv")
 const OUTPUT_DIR = joinpath(REPO_DIR, "output", "ltmc")
+# Version of the row files written by `run_row`; scripts refuse older outputs.
+# 1: r = 1..n (commit dbd5263). 2: adds r = 0 for exponential and deterministic delays.
+const ENGINE_VERSION = 2
 
 # Experimental design (see the paper, Section "Computational experiments").
 const GRID_BETAS = ["0.01", "0.05", "0.1", "0.2", "0.5"]
@@ -86,7 +91,12 @@ function run_row(row; systems::Vector{TwoTerminalSystem}, dir::AbstractString = 
     end
     delay = Delay(row.delay_type, parse(Float64, row.delay))
     pf, en, et = policy_quantities(s, R, exits, delay)
-    _check_quantities(pf, en, et, n, row)
+    rs = collect(1:n)
+    if delay.kind in (:exp, :det)
+        pf0, en0, et0 = policy_quantities_r0(s, R, exits, delay)
+        pushfirst!(rs, 0); pushfirst!(pf, pf0); pushfirst!(en, en0); pushfirst!(et, et0)
+    end
+    _check_quantities(rs, pf, en, et, n, row)
     seconds = time() - t0
 
     io = IOBuffer()
@@ -99,36 +109,43 @@ function run_row(row; systems::Vector{TwoTerminalSystem}, dir::AbstractString = 
     println(io, "# param = ", string(Float64(model.param)))
     println(io, "# mean_batch_n = ", mean_batch(model, n))
     println(io, "# seconds = ", round(seconds; digits = 4))
+    println(io, "# engine_version = ", ENGINE_VERSION)
     println(io, "# julia_version = ", VERSION)
     println(io, "# host = ", _hostname())
     println(io, "r,p_fail,e_nfail,e_trep")
-    for r in 1:n
-        println(io, r, ",", repr(pf[r]), ",", repr(en[r]), ",", repr(et[r]))
+    for (i, r) in enumerate(rs)
+        println(io, r, ",", repr(pf[i]), ",", repr(en[i]), ",", repr(et[i]))
     end
     atomic_write(path, take!(io))
     return :done
 end
 
-# Sanity checks that hold for every system, model and delay.
-function _check_quantities(pf, en, et, n, row)
+# Sanity checks that hold for every system, model and delay. The vectors are
+# indexed like `rs` (triggers in increasing order, possibly starting at r = 0).
+function _check_quantities(rs, pf, en, et, n, row)
     tol = 1e-9
-    for r in 1:n
-        -tol <= pf[r] <= 1 + tol || error("row $(row.row_id): p_fail[$(r)] = $(pf[r]) outside [0,1]")
-        1 - tol <= en[r] <= n + tol || error("row $(row.row_id): e_nfail[$(r)] = $(en[r]) outside [1,n]")
-        et[r] > 0 && isfinite(et[r]) || error("row $(row.row_id): e_trep[$(r)] = $(et[r])")
+    for (i, r) in enumerate(rs)
+        -tol <= pf[i] <= 1 + tol || error("row $(row.row_id): p_fail[r=$(r)] = $(pf[i]) outside [0,1]")
+        (r == 0 ? -tol : 1 - tol) <= en[i] <= n + tol ||
+            error("row $(row.row_id): e_nfail[r=$(r)] = $(en[i]) out of range")
+        et[i] > 0 && isfinite(et[i]) || error("row $(row.row_id): e_trep[r=$(r)] = $(et[i])")
     end
     # the last trigger (r = n) never fires before the system fails
-    abs(pf[n] - 1) <= tol || error("row $(row.row_id): p_fail[n] = $(pf[n]) ≠ 1")
-    if row.delay_type == "none"
-        # without delay, T_rep = min(T_{r:n}, T_fail) is nondecreasing in r
-        all(et[r] <= et[r + 1] * (1 + 1e-12) for r in 1:(n - 1)) ||
-            error("row $(row.row_id): e_trep not nondecreasing in r")
+    abs(pf[end] - 1) <= tol || error("row $(row.row_id): p_fail[r=n] = $(pf[end]) ≠ 1")
+    # a later trigger never repairs earlier: T_rep, N(T_rep) and the event of a
+    # system failure are nondecreasing in r for each sample path, for every
+    # delay (also from r = 0 to r = 1, and for inspections, whose times are fixed)
+    for v in (pf, en, et), i in 1:(length(rs) - 1)
+        v[i] <= v[i + 1] + 1e-10 * max(1.0, abs(v[i + 1])) ||
+            error("row $(row.row_id): quantities not nondecreasing in r at r = $(rs[i])")
     end
     return true
 end
 
 """
     read_row_output(path) -> (meta, r, p_fail, e_nfail, e_trep)
+
+Errors if the file was written by an engine older than `ENGINE_VERSION`.
 """
 function read_row_output(path::AbstractString)
     meta = Dict{String,String}()
@@ -137,6 +154,9 @@ function read_row_output(path::AbstractString)
         m = match(r"^#\s*([A-Za-z_]+)\s*=\s*(.*)$", line)
         m === nothing || (meta[m.captures[1]] = strip(m.captures[2]))
     end
+    get(meta, "engine_version", "1") == string(ENGINE_VERSION) ||
+        error("$(path) was written by engine version $(get(meta, "engine_version", "1")), expected ",
+              "$(ENGINE_VERSION); move the old output/ltmc away and re-run templates/run_array.sbatch")
     header, rows = read_simple_csv(path)
     header == ["r", "p_fail", "e_nfail", "e_trep"] || error("$(path): unexpected header")
     col(i, T) = [parse(T, x[i]) for x in rows]

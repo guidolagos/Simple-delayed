@@ -7,7 +7,9 @@
 # For every grid row, every ratio ρ = n c_cmp/c_sys in COST_RATIOS and every
 # setup σ = c_setup/c_sys in COST_SETUPS, with c_sys = 1 and repair cost
 # c_cmp(j) = c_setup + j c_cmp, writes one line of output/summary.csv:
-#   r_opt, ltmc_opt           optimal trigger (smallest minimizer) and its long-term mean cost
+#   r_opt, ltmc_opt           optimal trigger (smallest minimizer) and its long-term mean cost;
+#                             r = 0 (crew called right after each repair, exponential and
+#                             deterministic delays only) is admissible only when setup > 0
 #   ltmc_r1                   repair at the first failure (r = 1)
 #   ltmc_corrective           corrective only (r = n: repair when the system fails)
 #   saving_vs_corrective      1 - ltmc_opt / ltmc_corrective
@@ -31,15 +33,17 @@ function main()
             continue
         end
         res = read_row_output(path)
-        n = length(res.r)
-        n == ncomponents(get_system(systems, row.system)) || error("$(path): wrong number of rows")
+        n = ncomponents(get_system(systems, row.system))
+        res.r == (res.r[1] == 0 ? collect(0:n) : collect(1:n)) || error("$(path): unexpected triggers $(res.r)")
+        i1 = findfirst(==(1), res.r)
         for ρ in COST_RATIOS, σ in COST_SETUPS
             L = ltmc(res.p_fail, res.e_nfail, res.e_trep, n; ratio = ρ, setup = σ)
-            ropt = argmin(L)
+            adm = [i for i in eachindex(res.r) if res.r[i] >= 1 || σ > 0]
+            iopt = adm[argmin(L[adm])]
             println(io, join((row.row_id, row.system, n, row.model, row.beta, res.meta["param"],
                               res.meta["mean_batch_n"], row.delay_type, row.delay, ρ, σ,
-                              ropt, repr(L[ropt]), repr(L[1]), repr(L[n]),
-                              repr(1 - L[ropt] / L[n]), L[ropt] >= L[n] * (1 - 1e-12)), ","))
+                              res.r[iopt], repr(L[iopt]), repr(L[i1]), repr(L[end]),
+                              repr(1 - L[iopt] / L[end]), L[iopt] >= L[end] * (1 - 1e-12)), ","))
         end
     end
     mkpath(dirname(out))

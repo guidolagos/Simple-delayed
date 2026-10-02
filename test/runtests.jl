@@ -85,6 +85,21 @@ function read_ltmc_reference(path)
     return cases
 end
 
+quantities0(sysid, model, beta, kind, value; systems) = begin
+    sys = get_system(systems, sysid)
+    s = Float64.(read_signature_file(signature_path(sys)).s)
+    R, ex = transition_rates(lfmo_model(model, beta), ncomponents(sys))
+    policy_quantities_r0(s, R, ex, Delay(kind, value))
+end
+
+# Parametric pass helpers for the optimal-policy tests
+function setup_row(systems, sysid, model, beta)
+    sys = get_system(systems, sysid)
+    sf = read_signature_file(signature_path(sys))
+    R, ex = transition_rates(lfmo_model(model, beta), ncomponents(sys))
+    return sys, sf, R, ex
+end
+
 quantities(sysid, model, beta, kind, value; systems) = begin
     sys = get_system(systems, sysid)
     s = Float64.(read_signature_file(signature_path(sys)).s)
@@ -255,13 +270,21 @@ end
     @testset "LTMC quantities vs. closed forms of the paper (test/reference)" begin
         ref = read_ltmc_reference(joinpath(@__DIR__, "reference", "ltmc_reference.csv"))
         @test length(ref) == 43
+        @test count(((k, v),) -> v[1][1] == 0, ref) == 20      # r = 0 for the exp and det cases
         for ((sysid, model, beta, kind, value), vals) in ref
             pf, en, et = quantities(sysid, model, beta, kind, parse(Float64, value); systems = systems)
             for (r, p, e, t) in vals
                 r = Int(r)
-                @test isapprox(pf[r], p; rtol = 1e-10, atol = 1e-13)
-                @test isapprox(en[r], e; rtol = 1e-10)
-                @test isapprox(et[r], t; rtol = 1e-10)
+                if r == 0
+                    pf0, en0, et0 = quantities0(sysid, model, beta, kind, parse(Float64, value); systems = systems)
+                    @test isapprox(pf0, p; rtol = 1e-10, atol = 1e-13)
+                    @test isapprox(en0, e; rtol = 1e-10)
+                    @test isapprox(et0, t; rtol = 1e-10)
+                else
+                    @test isapprox(pf[r], p; rtol = 1e-10, atol = 1e-13)
+                    @test isapprox(en[r], e; rtol = 1e-10)
+                    @test isapprox(et[r], t; rtol = 1e-10)
+                end
             end
         end
     end
@@ -311,9 +334,157 @@ end
         @test run_row(row; systems = systems, dir = dir, cache = cache) == :skipped
         out = read_row_output(row_output_path(row.row_id; dir = dir))
         ref = read_ltmc_reference(joinpath(@__DIR__, "reference", "ltmc_reference.csv"))[(1, "LFMO-C", "0.2", "exp", "0.1")]
-        @test out.r == 1:5
+        @test out.r == 0:5                                 # r = 0 with an exponential delay
         @test isapprox(out.p_fail, [v[2] for v in ref]; rtol = 1e-10)
         @test out.meta["model"] == "LFMO-C"
+        @test out.meta["engine_version"] == string(ENGINE_VERSION)
         @test length(readdir(dir)) == 1                    # no leftover temporary file
+        # inspections: no r = 0
+        row = grid[findfirst(g -> g.system == 1 && g.model == "Exp" && g.delay_type == "insp", grid)]
+        @test run_row(row; systems = systems, dir = dir, cache = cache) == :done
+        @test read_row_output(row_output_path(row.row_id; dir = dir)).r == 1:5
+    end
+
+    @testset "optimal policies: after-call quantities" begin
+        for (sysid, model, beta) in ((1, "LFMO-C", "0.2"), (5, "BFR", "0.5"), (13, "LFMO-S", "0.05"))
+            sys, sf, R, ex = setup_row(systems, sysid, model, beta)
+            n = ncomponents(sys); s = Float64.(sf.s)
+            for d in (Delay(:exp, 0.3), Delay(:det, 0.1), Delay(:exp, 3.0), Delay(:det, 1.0))
+                cm = CountModel(sf.W, R, ex, d)
+                # a call at f = 0 is the r = 0 policy of the LTMC engine (different code path)
+                pf0, en0, et0 = policy_quantities_r0(s, R, ex, d)
+                @test isapprox(cm.pf[1], pf0; rtol = 1e-11, atol = 1e-14)
+                @test isapprox(cm.en[1], en0; rtol = 1e-11)
+                @test isapprox(cm.ell[1], et0; rtol = 1e-11)
+                d.kind == :exp || continue
+                # exponential delay: the signature form agrees with the recursion eq:ccall exp
+                γ = 1 / d.value
+                Pf = zeros(n + 1); EN = zeros(n + 1); Ll = zeros(n + 1)
+                for f in (n - 1):-1:0
+                    cm.Sbar[f + 1] > 0 || continue
+                    w = n - f; Ψw = ex[f + 1]
+                    a = 0.0; b = 0.0; c = 0.0
+                    for j in 1:w
+                        Pj = R[f + 1, f + j + 1] / Ψw
+                        ps = cm.Sbar[f + j + 1] / cm.Sbar[f + 1]
+                        a += Pj * (ps * Pf[f + j + 1] + (1 - ps))
+                        b += Pj * (ps * EN[f + j + 1] + (1 - ps) * (f + j))
+                        c += Pj * ps * Ll[f + j + 1]
+                    end
+                    Pf[f + 1] = Ψw * a / (γ + Ψw)
+                    EN[f + 1] = (γ * f + Ψw * b) / (γ + Ψw)
+                    Ll[f + 1] = (1 + Ψw * c) / (γ + Ψw)
+                    @test isapprox(cm.pf[f + 1], Pf[f + 1]; rtol = 1e-10, atol = 1e-14)
+                    @test isapprox(f + cm.en[f + 1], EN[f + 1]; rtol = 1e-10)
+                    @test isapprox(cm.ell[f + 1], Ll[f + 1]; rtol = 1e-10)
+                end
+            end
+            # inspections: one period either ends at an inspection or with a system failure
+            cm = CountModel(sf.W, R, ex, Delay(:insp, 0.3))
+            for f in 0:(n - 1)
+                cm.Sbar[f + 1] > 0 && @test isapprox(sum(cm.q[f + 1]) + cm.pf[f + 1], 1; atol = 1e-12)
+            end
+        end
+    end
+
+    @testset "optimal policies: forced thresholds reproduce the r-out-of-n engine" begin
+        for (sysid, model, beta) in ((3, "LFMO-G", "0.2"), (5, "LSh", "0.5"), (11, "BFR", "0.2"))
+            sys, sf, R, ex = setup_row(systems, sysid, model, beta)
+            n = ncomponents(sys); s = Float64.(sf.s)
+            S = StateSpace(sys)
+            @test working_counts(S) == sf.W
+            for d in (Delay(:none, 0), Delay(:exp, 0.3), Delay(:det, 0.1), Delay(:insp, 0.3))
+                rs, pf, en, et = rout_quantities(s, R, ex, d)
+                @test rs == (d.kind in (:exp, :det) ? collect(0:n) : collect(1:n))
+                cm = CountModel(sf.W, R, ex, d)
+                pre = state_precompute(S, cm)
+                costs = Costs(n; ratio = 1.0, setup = 0.1)
+                for (i, r) in enumerate(rs)
+                    L = (costs.c_set + costs.c_cmp * en[i] + costs.c_sys * pf[i]) / et[i]
+                    _, c, l = count_pass(cm, costs, 0.0; forced = f -> f >= r)
+                    @test isapprox(c / l, L; rtol = 1e-11)
+                    if r in (0, 1, 2, n)
+                        _, c, l = state_pass(S, cm, pre, costs, 0.0; forced = (x, f) -> f >= r)
+                        @test isapprox(c / l, L; rtol = 1e-11)
+                    end
+                end
+            end
+        end
+    end
+
+    @testset "optimal policies vs. independent reference (test/reference/optimal_reference.csv)" begin
+        header, rows = SimpleDelayed.read_simple_csv(joinpath(@__DIR__, "reference", "optimal_reference.csv"))
+        col(name) = findfirst(==(name), header)
+        @test length(rows) == 64
+        cache = Dict()
+        for r in rows
+            sysid = parse(Int, r[col("system")])
+            sys, sf, R, ex = setup_row(systems, sysid, r[col("model")], r[col("beta")])
+            n = ncomponents(sys)
+            d = Delay(r[col("delay_type")], parse(Float64, r[col("delay")]))
+            costs = Costs(n; ratio = parse(Float64, r[col("ratio")]), setup = parse(Float64, r[col("setup")]))
+            rs, pf, en, et = rout_quantities(Float64.(sf.s), R, ex, d)
+            L = (costs.c_set .+ costs.c_cmp .* en .+ costs.c_sys .* pf) ./ et
+            ib = argmin(L)
+            gr = parse(Float64, r[col("ltmc_best_r")])
+            @test isapprox(L[ib], gr; rtol = 1e-11)
+            @test isapprox(L[findfirst(==(parse(Int, r[col("best_r")])), rs)], gr; rtol = 1e-11)
+            cm = CountModel(sf.W, R, ex, d)
+            gc, act, _ = dinkelbach(g -> count_pass(cm, costs, g), L[ib])
+            @test isapprox(gc, parse(Float64, r[col("ltmc_count")]); rtol = 1e-11)
+            refpol = r[col("count_policy")]
+            if policy_string(act) != refpol           # only a numerical tie could explain this
+                _, c, l = count_pass(cm, costs, 0.0; forced = f -> refpol[f + 1] == 'C')
+                @test isapprox(c / l, gc; rtol = 1e-11)
+            end
+            S = get!(cache, sysid) do
+                StateSpace(sys)
+            end
+            pre = state_precompute(S, cm)
+            gs, _, _ = dinkelbach(g -> state_pass(S, cm, pre, costs, g), gc)
+            @test isapprox(gs, parse(Float64, r[col("ltmc_state")]); rtol = 1e-11)
+        end
+    end
+
+    @testset "optimal policies: [Exp] with continuous inspection is a threshold policy" begin
+        for sysid in (2, 6, 9)
+            sys, sf, R, ex = setup_row(systems, sysid, "Exp", "0")
+            n = ncomponents(sys)
+            for d in (Delay(:none, 0), Delay(:exp, 0.3), Delay(:det, 0.1)), (ρ, σ) in ((0.5, 0.05), (2.0, 0.2), (10.0, 0.5))
+                cm = CountModel(sf.W, R, ex, d)
+                costs = Costs(n; ratio = ρ, setup = σ)
+                rs, pf, en, et = rout_quantities(Float64.(sf.s), R, ex, d)
+                L = (costs.c_set .+ costs.c_cmp .* en .+ costs.c_sys .* pf) ./ et
+                gc, act, _ = dinkelbach(g -> count_pass(cm, costs, g), minimum(L))
+                @test is_threshold(act, d.kind)
+                @test isapprox(gc, minimum(L); rtol = 1e-11)    # hence no better than the best r
+            end
+        end
+        @test !is_threshold(Int8[0, 0, 1, 0, -1], :exp)
+        @test is_threshold(Int8[0, 1, -1, 1, -1], :exp)
+        @test is_threshold(Int8[1, 0, 1, 1], :insp)               # f = 0 is not a decision at inspections
+    end
+
+    @testset "optimal policies: grid rows" begin
+        grid = read_grid()
+        dir = mktempdir()
+        cache = Dict()
+        for (sysid, model, kind) in ((1, "BFR", "det"), (3, "LFMO-S", "insp"), (13, "LFMO-C", "exp"))
+            row = grid[findfirst(g -> g.system == sysid && g.model == model && g.beta == "0.2" &&
+                                      g.delay_type == kind && g.delay == "0.1", grid)]
+            @test run_optimal_row(row; systems = systems, dir = dir, cache = cache) == :done
+            @test run_optimal_row(row; systems = systems, dir = dir, cache = cache) == :skipped
+            res = read_optimal_output(row_output_path(row.row_id; dir = dir))
+            @test length(res.rows) == length(OPT_RATIOS) * length(OPT_SETUPS)
+            @test res.meta["state_based"] == string(sysid != 13)
+            c(name) = findfirst(==(name), res.header)
+            for r in res.rows
+                gr, gc, gs = parse.(Float64, (r[c("ltmc_best_r")], r[c("ltmc_count")], r[c("ltmc_state")]))
+                @test gc <= gr * (1 + 1e-12)
+                sysid == 13 ? (@test isnan(gs)) : (@test gs <= gc * (1 + 1e-12))
+                @test length(r[c("count_policy")]) == ncomponents(get_system(systems, sysid))
+            end
+        end
+        @test length(readdir(dir)) == 3
     end
 end
