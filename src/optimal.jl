@@ -298,18 +298,18 @@ function count_pass(cm::CountModel, costs::Costs, g::Real; forced = nothing)
                 cw += qj * c[f + j + 1]
                 lw += qj * l[f + j + 1]
             end
-            ccont = cw / (1 - qf[1]); lcont = lw / (1 - qf[1])
-            ccall = repair_cost(costs, f); lcall = 0.0
+            c_cont = cw / (1 - qf[1]); l_cont = lw / (1 - qf[1])
+            c_call = repair_cost(costs, f); l_call = 0.0
         else
-            ccall = costs.c_set + costs.c_cmp * (f + cm.en[f + 1]) + costs.c_sys * cm.pf[f + 1]
-            lcall = cm.ell[f + 1]
+            c_call = costs.c_set + costs.c_cmp * (f + cm.en[f + 1]) + costs.c_sys * cm.pf[f + 1]
+            l_call = cm.ell[f + 1]
             ex = cm.exits[f + 1]
-            ccont = 0.0; lcont = 1 / ex
+            c_cont = 0.0; l_cont = 1 / ex
             for j in 1:w
                 Pj = cm.R[f + 1, f + j + 1] / ex
                 ps = Sb[f + j + 1] / Sb[f + 1]
-                ccont += Pj * (ps * c[f + j + 1] + (1 - ps) * failure_cost(costs, f + j))
-                lcont += Pj * ps * l[f + j + 1]
+                c_cont += Pj * (ps * c[f + j + 1] + (1 - ps) * failure_cost(costs, f + j))
+                l_cont += Pj * ps * l[f + j + 1]
             end
         end
         call = if !call_allowed(cm.kind, f)
@@ -317,11 +317,11 @@ function count_pass(cm::CountModel, costs::Costs, g::Real; forced = nothing)
         elseif forced !== nothing
             forced(f)::Bool
         else
-            ccall - g * lcall <= ccont - g * lcont
+            c_call - g * l_call <= c_cont - g * l_cont
         end
         act[f + 1] = call ? Int8(1) : Int8(0)
-        c[f + 1] = call ? ccall : ccont
-        l[f + 1] = call ? lcall : lcont
+        c[f + 1] = call ? c_call : c_cont
+        l[f + 1] = call ? l_call : l_cont
     end
     return act, c[1], l[1]
 end
@@ -535,26 +535,26 @@ function state_pass(S::StateSpace, cm::CountModel, pre::StatePre, costs::Costs, 
             end
             if kind == :insp
                 p0 = T.pN[w, 1]
-                ccont = ((costs.c_set + costs.c_sys + costs.c_cmp * f) * pre.pf[x + 1] +
+                c_cont = ((costs.c_set + costs.c_sys + costs.c_cmp * f) * pre.pf[x + 1] +
                          costs.c_cmp * pre.en[x + 1] + sc) / (1 - p0)
-                lcont = (pre.ell[x + 1] + sl) / (1 - p0)
-                ccall = repair_cost(costs, f); lcall = 0.0
+                l_cont = (pre.ell[x + 1] + sl) / (1 - p0)
+                c_call = repair_cost(costs, f); l_call = 0.0
             else
-                ccall = costs.c_set + costs.c_cmp * (f + pre.en[x + 1]) + costs.c_sys * pre.pf[x + 1]
-                lcall = pre.ell[x + 1]
-                ccont = sc; lcont = 1 / cm.exits[f + 1] + sl
+                c_call = costs.c_set + costs.c_cmp * (f + pre.en[x + 1]) + costs.c_sys * pre.pf[x + 1]
+                l_call = pre.ell[x + 1]
+                c_cont = sc; l_cont = 1 / cm.exits[f + 1] + sl
             end
             call = if !call_allowed(kind, f)
                 false
             elseif forced !== nothing
                 forced(x, f)::Bool
             else
-                ccall - g * lcall <= ccont - g * lcont
+                c_call - g * l_call <= c_cont - g * l_cont
             end
             working[f + 1] += 1
             calls[f + 1] += call
-            curC[1, idx] = call ? ccall : ccont
-            curL[1, idx] = call ? lcall : lcont
+            curC[1, idx] = call ? c_call : c_cont
+            curL[1, idx] = call ? l_call : l_cont
         end
         prevC = curC; prevL = curL
     end
