@@ -143,7 +143,8 @@ computes
 - the optimal **state-based** policy (alg:state exp, alg:state det,
   alg:state fixed), which visits the 2^n states with O(n²) work each: for
   n ≤ 14 in the main run, for 15 ≤ n ≤ 22 (systems 7, 16, 18) in a separate
-  large run; not computed for n ≥ 24 (systems 13, 14, 17, 19, 20).
+  large run, and optionally for n = 24, 26, 27 (systems 20, 14, 17) in the
+  runs of "Largest systems" below; not for n = 30 (systems 13, 19).
 
 The `none` delay is included as continuous inspection with D = 0 (calling the
 crew is repairing at once, and it is not allowed with no failed component).
@@ -193,8 +194,53 @@ Then, on your own machine:
     rsync -av uai:Simple-delayed/output/ltmc/ output/ltmc/
     rsync -av uai:Simple-delayed/output/optimal/ output/optimal/
     rsync -av uai:Simple-delayed/output/optimal_large/ output/optimal_large/
+    rsync -av uai:Simple-delayed/output/benchmark/ output/benchmark/
     julia --project=. scripts/summarize.jl            # output/summary.csv
     julia --project=. scripts/summarize_optimal.jl    # output/optimal_summary.csv
+
+### Largest systems (n = 24, 26, 27)
+
+Measured on compute-slim (2 × Xeon E5-2650): one state-based pass takes about
+0.9 s for n = 21 and 1.6 s for n = 22, a cost pair needs 3.5 passes on average,
+and a row has 36 cost pairs. The cost grows as n² 2ⁿ, so per row (496 rows per
+system), extrapolating:
+
+| n  | system | memory (est.) | one pass | one row  | 496 rows   | request                         |
+|----|--------|---------------|----------|----------|------------|---------------------------------|
+| 24 | 20     | ~2 GB         | ~8 s     | ~16 min  | ~130 CPU-h | `--mem=4G`,  50 tasks, 12 h     |
+| 26 | 14     | ~7 GB         | ~35 s    | ~1.2 h   | ~600 CPU-h | `--mem=16G`, 100 tasks, 24 h    |
+| 27 | 17     | ~14 GB        | ~75 s    | ~2.6 h   | ~1300 CPU-h| `--mem=32G`, 124 tasks %30, 48 h |
+| 30 | 13, 19 | ~115 GB       | ~12 min  | ~26 h    | ~26000 CPU-h | not run (benchmark only)      |
+
+Pilot one row of each size first and adjust `--mem` (sacct MaxRSS) and `--time`:
+
+    # pilots (first row of each system: Exp, no delay)
+    sbatch --array=1 --mem=4G  --time=02:00:00 --export=ALL,NMIN=24,NMAX=24,NCHUNKS=1,EXTRA="--rows=9425:9425 --verbose" templates/optimal_xl.sbatch
+    sbatch --array=1 --mem=16G --time=06:00:00 --export=ALL,NMIN=26,NMAX=26,NCHUNKS=1,EXTRA="--rows=6449:6449 --verbose" templates/optimal_xl.sbatch
+    sbatch --array=1 --mem=32G --time=12:00:00 --export=ALL,NMIN=27,NMAX=27,NCHUNKS=1,EXTRA="--rows=7937:7937 --verbose" templates/optimal_xl.sbatch
+    sacct -j <jobid> -o JobID,State,Elapsed,MaxRSS,ReqMem
+    # full runs (the pilot row is skipped)
+    sbatch --array=1-50      --mem=4G  --time=12:00:00 --export=ALL,NMIN=24,NMAX=24,NCHUNKS=50  templates/optimal_xl.sbatch
+    sbatch --array=1-100     --mem=16G --time=24:00:00 --export=ALL,NMIN=26,NMAX=26,NCHUNKS=100 templates/optimal_xl.sbatch
+    sbatch --array=1-124%30  --mem=32G --time=48:00:00 --export=ALL,NMIN=27,NMAX=27,NCHUNKS=124 templates/optimal_xl.sbatch
+
+`%30` limits the n = 27 run to 30 simultaneous tasks (about 1 TB of memory), so
+that it does not take the whole partition. A task killed by `--time` loses only
+the row in progress; re-submit the same command to finish.
+
+### Runtime benchmark
+
+`scripts/benchmark.jl` times every step separately (transition rates, r-out-of-n
+quantities, evaluation of the LTMC of all r for one cost pair, after-call
+tables, one count-based pass, count- and state-based Dinkelbach, state space
+and per-state precomputation) on representative rows, after a warm-up, and
+writes `output/benchmark/benchmark.csv`:
+
+    sbatch templates/benchmark.sbatch                       # all systems, state-based n <= 22, ~1 h
+    # one cost pair with a larger state space (n = 30 needs compute-fat, ~115 GB)
+    sbatch --partition=compute-fat --mem=250G --time=12:00:00 \
+        --export=ALL,EXTRA="--systems=13 --delays=det:0.1 --pairs=1.0:0.1 --state-max-n=30 --out=output/benchmark/benchmark_n30.csv" \
+        templates/benchmark.sbatch
 
 ## Layout
 - `src/` reusable code (systems, signatures, LFMO models, LTMC engine, experiment grid, optimal policies)

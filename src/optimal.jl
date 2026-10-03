@@ -37,7 +37,10 @@ const OPT_SETUPS = [0.05, 0.1, 0.2, 0.5]
 const OPTIMAL_DIR = joinpath(REPO_DIR, "output", "optimal")
 const OPTIMAL_LARGE_DIR = joinpath(REPO_DIR, "output", "optimal_large")
 const OPTIMAL_VERSION = 1
-const STATE_MAX_N_HARD = 26      # 2^26 states; beyond this the state space does not fit
+# 2^n states. Peak memory of a state-based row is about 33 2^n bytes plus four
+# (w+1) x binomial(n, w) Float64 matrices of the largest level: ~0.4 GB for n = 22,
+# ~7 GB for n = 26, ~14 GB for n = 27, ~115 GB for n = 30 (see README).
+const STATE_MAX_N_HARD = 30
 
 """
     Costs(n; ratio, setup, c_sys = 1.0)
