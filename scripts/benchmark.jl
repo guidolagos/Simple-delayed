@@ -22,9 +22,15 @@
 #   system,n,model,beta,delay_type,delay,step,ratio,setup,seconds,iterations,maxrss_mb
 # Steps (seconds are per call):
 #   rates            transition rates of the survivor-count chain (512-bit), once per (model, n)
-#   rout             p_fail, E N, E T of all r-out-of-n policies (cost-free), once per row
+#   closed           delay-independent closed forms (closed_forms, includes `rates`), once per (model, n)
+#   delay_forms      delay-dependent closed forms (BigFloat), once per (model, n, delay)
+#   rout             p_fail, E N, E T of all r-out-of-n policies (cost-free) from the closed
+#                    forms, given `delay_forms`, once per row
+#   rout_chain       the same with the survivor-count chain engine (Float64 check)
 #   ltmc_eval        long-term mean cost of all r for one cost pair, and its minimum
-#   tables           after-call / one-period tables (CountModel), once per row
+#   tables           after-call / one-period tables from the closed forms, given
+#                    `delay_forms`, and the CountModel, once per row
+#   tables_chain     the same with the survivor-count chain engine (Float64 check)
 #   count_pass       one count-based pass (alg:count *), at the best r-out-of-n cost
 #   count_opt        count-based Dinkelbach, warm-started at the best r-out-of-n (iterations = passes)
 #   states           state space (2^n structure-function evaluations), once per system
@@ -115,10 +121,21 @@ function main(args)
         delay = Delay(row.delay_type, parse(Float64, row.delay))
         t, (R, exits) = tmin(() -> transition_rates(m, n), 1)
         rec && record(row, n, "rates", "", "", t, "")
-        t, (rs, pf, en, et) = tmin(() -> rout_quantities(s, R, exits, delay), reps)
+        t, cf = tmin(() -> closed_forms(m, n), 1)
+        rec && record(row, n, "closed", "", "", t, "")
+        df = nothing
+        if delay.kind != :none
+            t, df = tmin(() -> delay_forms(cf, delay), reps)
+            rec && record(row, n, "delay_forms", "", "", t, "")
+        end
+        t, (rs, pf, en, et) = tmin(() -> rout_quantities(sigfile.s, cf, delay; df = df), reps)
         rec && record(row, n, "rout", "", "", t, "")
-        t, cm = tmin(() -> CountModel(sigfile.W, R, exits, delay), reps)
+        t, _ = tmin(() -> rout_quantities_chain(s, R, exits, delay), reps)
+        rec && record(row, n, "rout_chain", "", "", t, "")
+        t, cm = tmin(() -> CountModel(sigfile.W, R, exits, call_tables(cf, delay; df = df)), reps)
         rec && record(row, n, "tables", "", "", t, "")
+        t, _ = tmin(() -> CountModel(sigfile.W, R, exits, delay), reps)
+        rec && record(row, n, "tables_chain", "", "", t, "")
         do_state = n <= state_max_n
         S = pre = nothing
         if do_state

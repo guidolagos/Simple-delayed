@@ -12,7 +12,10 @@ const GRID_PATH = joinpath(DATA_DIR, "grid.csv")
 const OUTPUT_DIR = joinpath(REPO_DIR, "output", "ltmc")
 # Version of the row files written by `run_row`; scripts refuse older outputs.
 # 1: r = 1..n (commit dbd5263). 2: adds r = 0 for exponential and deterministic delays.
-const ENGINE_VERSION = 2
+# 3: computed with the closed forms of the paper in BigFloat (closed_forms.jl); the
+#    survivor-count chain engine is run as a check and its largest difference is
+#    recorded in the metadata (engine_check_*).
+const ENGINE_VERSION = 3
 
 # Experimental design (see the paper, Section "Computational experiments").
 const GRID_BETAS = ["0.01", "0.05", "0.1", "0.2", "0.5"]
@@ -86,18 +89,21 @@ function run_row(row; systems::Vector{TwoTerminalSystem}, dir::AbstractString = 
     model = get!(cache, (:model, row.model, row.beta)) do
         lfmo_model(row.model, row.beta)
     end
-    R, exits = get!(cache, (:rates, row.model, row.beta, n)) do
-        transition_rates(model, n)
+    cf = get!(cache, (:closed, row.model, row.beta, n)) do
+        closed_forms(model, n)
     end
     delay = Delay(row.delay_type, parse(Float64, row.delay))
-    pf, en, et = policy_quantities(s, R, exits, delay)
-    rs = collect(1:n)
-    if delay.kind in (:exp, :det)
-        pf0, en0, et0 = policy_quantities_r0(s, R, exits, delay)
-        pushfirst!(rs, 0); pushfirst!(pf, pf0); pushfirst!(en, en0); pushfirst!(et, et0)
-    end
+    rs, pf, en, et = policy_quantities_all(sigfile.s, cf, delay)
     _check_quantities(rs, pf, en, et, n, row)
     seconds = time() - t0
+    # independent check: the survivor-count chain engine (Float64)
+    t1 = time()
+    _, cpf, cen, cet = rout_quantities_chain(s, cf.R, cf.exits, delay)
+    check_prob = max_diff(pf, cpf; relative = false)
+    check_rel = max(max_diff(en, cen; relative = true), max_diff(et, cet; relative = true))
+    seconds_chain = time() - t1
+    check_prob <= 1e-9 && check_rel <= 1e-9 ||
+        error("row $(row.row_id): closed forms and chain disagree (p_fail $(check_prob), relative $(check_rel))")
 
     io = IOBuffer()
     println(io, "# SimpleDelayed LTMC quantities of the r-out-of-n policy with delay")
@@ -109,6 +115,10 @@ function run_row(row; systems::Vector{TwoTerminalSystem}, dir::AbstractString = 
     println(io, "# param = ", string(Float64(model.param)))
     println(io, "# mean_batch_n = ", mean_batch(model, n))
     println(io, "# seconds = ", round(seconds; digits = 4))
+    println(io, "# engine = closed forms, BigFloat ", cf.prec, " bits")
+    println(io, "# engine_check_prob = ", repr(check_prob))
+    println(io, "# engine_check_rel = ", repr(check_rel))
+    println(io, "# seconds_chain = ", round(seconds_chain; digits = 4))
     println(io, "# engine_version = ", ENGINE_VERSION)
     println(io, "# julia_version = ", VERSION)
     println(io, "# host = ", _hostname())

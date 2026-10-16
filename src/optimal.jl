@@ -13,11 +13,13 @@
 #   with the conditional signature s^(f) (count-based) or the per-state
 #   signature s^x (state-based) and the numbers a^(w)_i, b^(w)_i of
 #   prop:after call det, for every delay (the paper notes the closed forms
-#   also hold for the exponential delay). These numbers are computed from the
-#   survivor-count chain of a residual system with w components, frozen at i
-#   failures, by the resolvent (exponential delay) or by uniformization
-#   (deterministic delay, inspection period): nonnegative terms only, so no
-#   alternating sums of lem:pbbs and exps.
+#   also hold for the exponential delay). These numbers (`CallTables`) are
+#   computed with the closed forms of lem:pbbs and exps in BigFloat
+#   (`call_tables`, closed_forms.jl). The Float64 engine on the survivor-count
+#   chain of a residual system with w components, frozen at i failures
+#   (resolvent for an exponential delay, uniformization for a constant delay
+#   or an inspection period; nonnegative terms only) is kept as a check
+#   (`call_tables_chain`); each row records the largest difference.
 # * The cost-free parts (probability of a system failure, expected number of
 #   failed components, expected time) are stored separately: they are computed
 #   once per (system, model, delay) and reused for every cost pair and pass.
@@ -36,7 +38,10 @@ const OPT_RATIOS = COST_RATIOS
 const OPT_SETUPS = [0.05, 0.1, 0.2, 0.5]
 const OPTIMAL_DIR = joinpath(REPO_DIR, "output", "optimal")
 const OPTIMAL_LARGE_DIR = joinpath(REPO_DIR, "output", "optimal_large")
-const OPTIMAL_VERSION = 1
+# Version of the row files written by `run_optimal_row`.
+# 1: tables and r-out-of-n quantities from the survivor-count chain.
+# 2: from the closed forms in BigFloat, with the chain as a recorded check (engine_check_*).
+const OPTIMAL_VERSION = 2
 # 2^n states. Peak memory of a state-based row is about 33 2^n bytes plus four
 # (w+1) x binomial(n, w) Float64 matrices of the largest level: ~0.4 GB for n = 22,
 # ~7 GB for n = 26, ~14 GB for n = 27, ~115 GB for n = 30 (see README).
@@ -110,15 +115,48 @@ function _poisson_tail(λ::Float64)
 end
 
 """
-    call_tables(R, exits, delay) -> CallTables
+    call_tables(cf::ClosedForms, delay; df = nothing) -> CallTables
 
-From the survivor-count chain `(R, exits)` of `transition_rates` for n
+The after-call and one-period tables from the closed forms (prop:after call det,
+lem:period, lem:pbbs and exps) in BigFloat, rounded to Float64:
+pf = 1 - P(D < T_{i:w}), enA = Σ_j j P(N^{(w)}(min(T_{i:w}, D)) = j),
+enF = Σ_{j >= i} j P(N^{(w)}(T_{i:w}) = j, T_{j:w} < D), ell = E[min(T_{i:w}, D)]
+and pN = P(N^{(w)}(D) = j). `df` may pass `delay_forms(cf, delay)`.
+"""
+function call_tables(cf::ClosedForms, delay::Delay; df::Union{DelayForms,Nothing} = nothing)
+    n = cf.n
+    pf = zeros(n, n); enA = zeros(n, n); enF = zeros(n, n); ell = zeros(n, n)
+    pN = zeros(n, n + 1)
+    delay.kind == :none && return CallTables(:none, pf, enA, enF, ell, pN)
+    df === nothing && (df = delay_forms(cf, delay))
+    df.kind == delay.kind || error("delay forms are for $(df.kind), not $(delay.kind)")
+    setprecision(BigFloat, cf.prec) do
+        for w in 1:n
+            for i in 1:w
+                pf[w, i] = Float64(1 - df.pnot[w][i])
+                enA[w, i] = Float64(df.EA[w][i])
+                enF[w, i] = Float64(df.T1[w][i])
+                ell[w, i] = Float64(df.ell[w][i])
+            end
+            for j in 0:w
+                pN[w, j + 1] = Float64(df.PN[w][j + 1])
+            end
+        end
+    end
+    _check_tables(pf, enA, enF, ell, pN, delay)
+    return CallTables(delay.kind, pf, enA, enF, ell, pN)
+end
+
+"""
+    call_tables_chain(R, exits, delay) -> CallTables
+
+Check engine. From the survivor-count chain `(R, exits)` of `transition_rates` for n
 components: the residual chain with w working components is the block of counts
 f..n, f = n - w. For each (w, i) the chain is frozen at i further failures and
 run for the delay from count 0: resolvent for an exponential delay, and
 uniformization with rate Ψ(w) (the largest exit rate) for a constant one.
 """
-function call_tables(R::Matrix{Float64}, exits::Vector{Float64}, delay::Delay)
+function call_tables_chain(R::Matrix{Float64}, exits::Vector{Float64}, delay::Delay)
     n = length(exits) - 1
     pf = zeros(n, n); enA = zeros(n, n); enF = zeros(n, n); ell = zeros(n, n)
     pN = zeros(n, n + 1)
@@ -220,10 +258,13 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    CountModel(W, R, exits, delay)
+    CountModel(W, cf::ClosedForms, delay)
+    CountModel(W, R, exits, delay)            (check engine: chain tables)
+    CountModel(W, R, exits, tables::CallTables)
 
 Everything a count-based pass needs, for a system with working-state counts
-`W[f+1]` (signature file), survivor-count chain `(R, exits)` and `delay`. Per
+`W[f+1]` (signature file), survivor-count chain rates `(R, exits)` and the
+after-call tables of the delay (closed forms by default). Per
 f with Sbar_f > 0 (index f + 1):
 
 - continuous inspection (`:none`, `:exp`, `:det`): after a call, `pf` =
@@ -247,11 +288,18 @@ struct CountModel
     q::Vector{Vector{Float64}}
 end
 
-function CountModel(W::AbstractVector{<:Integer}, R::Matrix{Float64}, exits::Vector{Float64}, delay::Delay)
+CountModel(W::AbstractVector{<:Integer}, cf::ClosedForms, delay::Delay) =
+    CountModel(W, cf.R, cf.exits, call_tables(cf, delay))
+
+CountModel(W::AbstractVector{<:Integer}, R::Matrix{Float64}, exits::Vector{Float64}, delay::Delay) =
+    CountModel(W, R, exits, call_tables_chain(R, exits, delay))
+
+function CountModel(W::AbstractVector{<:Integer}, R::Matrix{Float64}, exits::Vector{Float64}, T::CallTables)
     n = length(W) - 1
     size(R) == (n + 1, n + 1) || error("rates are not for n = $(n) components")
+    size(T.pf) == (n, n) || error("call tables are not for n = $(n) components")
+    delay = (kind = T.kind,)
     Sbar = [Float64(big(W[f + 1]) // binomial(big(n), f)) for f in 0:n]
-    T = call_tables(R, exits, delay)
     pf = zeros(n + 1); en = zeros(n + 1); ell = zeros(n + 1)
     q = [Float64[] for _ in 0:n]
     for f in 0:(n - 1)
@@ -575,17 +623,25 @@ mixed_levels(calls, working) = count(f -> 0 < calls[f] < working[f], eachindex(c
 # ---------------------------------------------------------------------------
 
 """
-    rout_quantities(s, R, exits, delay) -> (rs, p_fail, e_nfail, e_trep)
+    rout_quantities(s, cf::ClosedForms, delay) -> (rs, p_fail, e_nfail, e_trep)
 
 The r-out-of-n quantities for every admissible trigger: r = 0..n with an
-exponential or deterministic delay, r = 1..n otherwise.
+exponential or deterministic delay, r = 1..n otherwise (closed forms;
+`policy_quantities_all`).
 """
-function rout_quantities(s, R, exits, delay::Delay)
+rout_quantities(s, cf::ClosedForms, delay::Delay; df = nothing) = policy_quantities_all(s, cf, delay; df = df)
+
+"""
+    rout_quantities_chain(s, R, exits, delay) -> (rs, p_fail, e_nfail, e_trep)
+
+The same with the survivor-count chain engine (check).
+"""
+function rout_quantities_chain(s, R, exits, delay::Delay)
     n = length(s)
-    pf, en, et = policy_quantities(s, R, exits, delay)
+    pf, en, et = policy_quantities_chain(s, R, exits, delay)
     rs = collect(1:n)
     if delay.kind in (:exp, :det)
-        pf0, en0, et0 = policy_quantities_r0(s, R, exits, delay)
+        pf0, en0, et0 = policy_quantities_r0_chain(s, R, exits, delay)
         pushfirst!(rs, 0); pushfirst!(pf, pf0); pushfirst!(en, en0); pushfirst!(et, et0)
     end
     return rs, pf, en, et
@@ -615,12 +671,26 @@ function run_optimal_row(row; systems::Vector{TwoTerminalSystem}, dir::AbstractS
     model = get!(cache, (:model, row.model, row.beta)) do
         lfmo_model(row.model, row.beta)
     end
-    R, exits = get!(cache, (:rates, row.model, row.beta, n)) do
-        transition_rates(model, n)
+    cf = get!(cache, (:closed, row.model, row.beta, n)) do
+        closed_forms(model, n)
     end
+    R, exits = cf.R, cf.exits
     delay = Delay(row.delay_type, parse(Float64, row.delay))
-    rs, pf, en, et = rout_quantities(s, R, exits, delay)
-    cm = CountModel(sigfile.W, R, exits, delay)
+    df = delay.kind == :none ? nothing : delay_forms(cf, delay)
+    rs, pf, en, et = rout_quantities(sigfile.s, cf, delay; df = df)
+    T = call_tables(cf, delay; df = df)
+    cm = CountModel(sigfile.W, R, exits, T)
+    # independent check: the survivor-count chain engine (Float64)
+    t1 = time()
+    _, cpf, cen, cet = rout_quantities_chain(s, R, exits, delay)
+    Tc = call_tables_chain(R, exits, delay)
+    check_prob = max(max_diff(pf, cpf; relative = false), max_diff(T.pf, Tc.pf; relative = false),
+                     max_diff(T.pN, Tc.pN; relative = false), max_diff(T.enF, Tc.enF; relative = false))
+    check_rel = max(max_diff(en, cen; relative = true), max_diff(et, cet; relative = true),
+                    max_diff(T.enA, Tc.enA; relative = true), max_diff(T.ell, Tc.ell; relative = true))
+    seconds_chain = time() - t1
+    check_prob <= 1e-9 && check_rel <= 1e-9 ||
+        error("row $(row.row_id): closed forms and chain disagree (probabilities $(check_prob), relative $(check_rel))")
     do_state = n <= state_max_n
     S = pre = nothing
     if do_state
@@ -666,6 +736,10 @@ function run_optimal_row(row; systems::Vector{TwoTerminalSystem}, dir::AbstractS
     println(io, "# mean_batch_n = ", mean_batch(model, n))
     println(io, "# state_based = ", do_state)
     println(io, "# seconds = ", round(seconds; digits = 3))
+    println(io, "# engine = closed forms, BigFloat ", cf.prec, " bits")
+    println(io, "# engine_check_prob = ", repr(check_prob))
+    println(io, "# engine_check_rel = ", repr(check_rel))
+    println(io, "# seconds_chain = ", round(seconds_chain; digits = 3))
     println(io, "# optimal_version = ", OPTIMAL_VERSION)
     println(io, "# julia_version = ", VERSION)
     println(io, "# host = ", _hostname())
@@ -678,17 +752,21 @@ function run_optimal_row(row; systems::Vector{TwoTerminalSystem}, dir::AbstractS
 end
 
 """
-    read_optimal_output(path) -> (meta, header, rows)
+    read_optimal_output(path; versions = (OPTIMAL_VERSION,)) -> (meta, header, rows)
+
+Errors unless the file's `optimal_version` is in `versions`. Only
+scripts/summarize_optimal.jl accepts version 1, for the state-based columns of
+output/optimal_large (see README).
 """
-function read_optimal_output(path::AbstractString)
+function read_optimal_output(path::AbstractString; versions = (OPTIMAL_VERSION,))
     meta = Dict{String,String}()
     for line in eachline(path)
         startswith(line, "#") || continue
         m = match(r"^#\s*([A-Za-z_]+)\s*=\s*(.*)$", line)
         m === nothing || (meta[m.captures[1]] = strip(m.captures[2]))
     end
-    get(meta, "optimal_version", "") == string(OPTIMAL_VERSION) ||
-        error("$(path): optimal_version $(get(meta, "optimal_version", "?")), expected $(OPTIMAL_VERSION)")
+    get(meta, "optimal_version", "") in string.(versions) ||
+        error("$(path): optimal_version $(get(meta, "optimal_version", "?")), expected one of $(versions)")
     header, rows = read_simple_csv(path)
     header == OPTIMAL_HEADER || error("$(path): unexpected header")
     return (meta = meta, header = header, rows = rows)

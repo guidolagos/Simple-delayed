@@ -88,7 +88,8 @@ that is 20 × 31 × 16 = 9920 rows. Each row writes
 `p_fail = P(T_rep = T_fail)`, `e_nfail = E[N(T_rep)]` and `e_trep = E[T_rep]`
 (Theorem thm:repairdelay of the paper), plus r = 0 (the crew is called right
 after each repair; Remark rmk:call0) for the `exp` and `det` delays. Row files
-carry `# engine_version = 2`; the scripts refuse files of version 1 (no r = 0).
+carry `# engine_version = 3` (closed-form engine, below); the scripts refuse
+files of versions 1 (no r = 0) and 2 (chain engine).
 In the summary, r = 0 is admissible only when setup > 0. The cost enters only afterwards: with
 c_sys = 1 and c_cmp(j) = c_setup + j c_cmp,
 
@@ -101,15 +102,29 @@ setup = c_setup/c_sys in `COST_SETUPS` (0, 0.05, 0.1, 0.2, 0.5): without it,
 repairing at every single failure (r = 1) is almost always optimal. The cost
 grid costs nothing to extend.
 
-Method and validation (`src/ltmc.jl`): Markov chain of the number of failed
-components, frozen at k failures for each k-out-of-n system of the signature
-decomposition; all solves are triangular substitutions with nonnegative terms
-(no cancellation), and the transition rates are computed in 512-bit BigFloat.
-`test/reference/ltmc_reference.py` evaluates the paper's closed forms
-(thm:LFMO, thm:determinstic, thm:LFMOsch) in 80-digit arithmetic and checks
-them against a Monte Carlo simulation of the actual networks;
-`test/reference/ltmc_reference.csv` (43 cases, with r = 0 for the exp and det
-ones) is what `Pkg.test()` compares the Julia engine with (relative tolerance 1e-10).
+Method (`src/closed_forms.jl`): the closed forms of the paper (Lemma
+lem:pbbs and exps, Theorems thm:LFMO, thm:determinstic, thm:LFMOsch, and the
+signature decomposition thm:repairdelay), evaluated in BigFloat with
+`CLOSED_PRECISION` = 256 bits and rounded to Float64. They are alternating
+binomial sums whose terms add up, in absolute value, to about 3^n times the
+result, so Float64 is not enough (errors up to ~10% at n = 30); 256 bits leave
+more than 200 bits for n ≤ 30 (`Pkg.test()` checks 256 against 512 bits).
+
+Check (`src/ltmc.jl`, `*_chain`): an independent Float64 engine on the Markov
+chain of the number of failed components, frozen at k failures for each
+k-out-of-n system; all solves are triangular substitutions with nonnegative
+terms (resolvent for exponential delays, uniformization for constant delays and
+inspection periods). Every row file records the largest difference between both
+engines (`engine_check_prob`: absolute, probabilities; `engine_check_rel`:
+relative, expectations), and a row fails if either exceeds 1e-9;
+`scripts/engine_check.jl` collects them.
+
+Validation: `test/reference/ltmc_reference.py` evaluates the paper's closed forms
+in 80-digit arithmetic and checks them against a Monte Carlo simulation of the
+actual networks; `test/reference/ltmc_reference.csv` (43 cases, with r = 0 for
+the exp and det ones) is what `Pkg.test()` compares both Julia engines with
+(relative tolerance 1e-10). `Pkg.test()` also compares both engines with each
+other for all delays on systems with up to n = 30 components (1e-12).
 
 ### Run on the cluster
 
@@ -119,7 +134,9 @@ ones) is what `Pkg.test()` compares the Julia engine with (relative tolerance 1e
         julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile(); Pkg.test()'
     # pilot: 20 rows of chunk 1, check the log and the seconds in the output headers
     sbatch --array=1 --export=ALL,EXTRA="--rows=1:400" templates/run_array.sbatch
-    # everything (20 chunks); rows already done are skipped
+    # everything (20 chunks); rows already done are skipped. After an
+    # ENGINE_VERSION change, move the old outputs away first:
+    #   mv output/ltmc output/ltmc_v2
     sbatch templates/run_array.sbatch
     squeue -u $USER
     grep -l "failed [1-9]" logs/ltmc_*.out     # any failed rows?
@@ -155,6 +172,20 @@ count_policy` (`C` call, `.` continue, `-` unreachable, for f = 0..n-1),
 `state_mixed_levels` (levels f where the state policy calls at some but not all
 working states) and `state_calls` (calls/working states per f). Every row checks
 state ≤ count ≤ best r-out-of-n.
+
+The after-call and one-period tables (prop:after call det, lem:period) and the
+r-out-of-n quantities come from the closed forms in BigFloat (`call_tables`,
+`rout_quantities`), with the chain engine as a recorded check
+(`engine_check_*`), as for the LTMC grid. `# optimal_version = 2`.
+
+Versions. Version 1 files were computed with the chain tables. The state-based
+results of `output/optimal_large/` (n = 21..27, ~1,900 CPU-hours) were not
+recomputed: `scripts/summarize_optimal.jl` takes the r-out-of-n and count-based
+columns of every row from `output/optimal/` (version 2), takes only the
+state-based columns from `output/optimal_large/` (version 1 accepted there, and
+only there), and errors if the r-out-of-n and count-based columns of both files
+differ by more than 1e-9 (relative); it prints the largest difference. The
+tables of both engines agree to about 1e-15 (`scripts/engine_check.jl`).
 
 Validation: `test/reference/optimal_reference.py` is an independent mpmath
 implementation that follows the paper literally (recursion eq:ccall exp, closed
@@ -230,11 +261,12 @@ the row in progress; re-submit the same command to finish.
 
 ### Runtime benchmark
 
-`scripts/benchmark.jl` times every step separately (transition rates, r-out-of-n
-quantities, evaluation of the LTMC of all r for one cost pair, after-call
-tables, one count-based pass, count- and state-based Dinkelbach, state space
-and per-state precomputation) on representative rows, after a warm-up, and
-writes `output/benchmark/benchmark.csv`:
+`scripts/benchmark.jl` times every step separately (transition rates, closed
+forms independent of the delay and depending on it, r-out-of-n quantities and
+after-call tables with both engines, evaluation of the LTMC of all r for one cost
+pair, one count-based pass, count- and state-based Dinkelbach, state space and
+per-state precomputation) on representative rows, after a warm-up, and writes
+`output/benchmark/benchmark.csv`:
 
     sbatch templates/benchmark.sbatch                       # all systems, state-based n <= 22, ~1 h
     # one cost pair with a larger state space (n = 30 needs compute-fat, ~115 GB)

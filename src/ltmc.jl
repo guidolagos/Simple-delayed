@@ -8,12 +8,17 @@
 #   e_nfail = E[N(T_rep)]                    failed components when the repair starts
 #   e_trep  = E[T_rep]                       cycle length
 #
-# and the system values are the s_k-weighted sums. With c_sys the system
-# failure cost and c_cmp(j) = j c_cmp,
+# and the system values are the s_k-weighted sums. With repair cost
+# C(x) = c_set + (n - |x|) c_comp + 1{system failed} c_sys (def:cost),
 #
-#   LTMC = (c_cmp e_nfail + c_sys p_fail) / e_trep .
+#   LTMC = (c_set + c_comp e_nfail + c_sys p_fail) / e_trep .
 #
-# Method. The number of failed components is a pure-death (pure-birth in the
+# The production engine evaluates the closed forms of the paper in BigFloat
+# (closed_forms.jl: `policy_quantities`, `policy_quantities_r0`,
+# `policy_quantities_all`). This file keeps the independent Float64 engine on
+# the survivor-count chain, used as a check (`*_chain`):
+#
+# The number of failed components is a pure-death (pure-birth in the
 # failed count) Markov chain with rates from `transition_rates`. For the
 # k-out-of-n system we freeze the chain at every count c >= k (the system has
 # failed; the count at failure may exceed k because of simultaneous failures).
@@ -26,9 +31,8 @@
 #   * inspection every Δ: the chain observed at inspection times, with
 #     G = e_0 (I - exp(QΔ) restricted to counts < min(r,k))^{-1}.
 # The generator is upper triangular, so every solve is a substitution, and all
-# sums have nonnegative terms (no cancellation). The results agree with the
-# closed forms of the paper (thm:LFMO, thm:determinstic, thm:LFMOsch) to about
-# 1e-15; see test/reference/.
+# sums have nonnegative terms (no cancellation). Both engines agree to about
+# 1e-15 (test/runtests.jl and the `engine_check` metadata of the row files).
 
 """
     Delay(kind, value)
@@ -169,14 +173,15 @@ function _phase1(R::Matrix{Float64}, exits::Vector{Float64}, m::Int)
 end
 
 """
-    policy_quantities(s, R, exits, delay) -> (p_fail, e_nfail, e_trep)
+    policy_quantities_chain(s, R, exits, delay) -> (p_fail, e_nfail, e_trep)
 
 For the system with signature `s` (`s[k]`, k = 1..n, as Float64) and the
 survivor-count chain `(R, exits)` of `transition_rates`, returns three vectors
 indexed by the trigger r = 1..n with P(T_rep = T_fail), E[N(T_rep)] and
-E[T_rep] for the r-out-of-n policy with `delay`.
+E[T_rep] for the r-out-of-n policy with `delay`. Survivor-count chain engine
+(check of the closed-form engine `policy_quantities`).
 """
-function policy_quantities(s::AbstractVector{<:Real}, R::Matrix{Float64}, exits::Vector{Float64}, delay::Delay)
+function policy_quantities_chain(s::AbstractVector{<:Real}, R::Matrix{Float64}, exits::Vector{Float64}, delay::Delay)
     n = length(s)
     size(R) == (n + 1, n + 1) && length(exits) == n + 1 || error("rates are not for n = $(n) components")
     pf = zeros(Float64, n); en = zeros(Float64, n); et = zeros(Float64, n)
@@ -253,15 +258,15 @@ function policy_quantities(s::AbstractVector{<:Real}, R::Matrix{Float64}, exits:
 end
 
 """
-    policy_quantities_r0(s, R, exits, delay) -> (p_fail, e_nfail, e_trep)
+    policy_quantities_r0_chain(s, R, exits, delay) -> (p_fail, e_nfail, e_trep)
 
 The same three quantities for r = 0 (Definition def:policy and Remark rmk:call0
 of the paper): the crew is called at time 0, right after the previous repair,
 and arrives after the delay unless the system fails before. Only meaningful
 with continuous inspection and a positive delay, i.e. `delay.kind` in
-(:exp, :det). It is the delay phase of `policy_quantities` started at count 0.
+(:exp, :det). It is the delay phase of `policy_quantities_chain` started at count 0.
 """
-function policy_quantities_r0(s::AbstractVector{<:Real}, R::Matrix{Float64}, exits::Vector{Float64},
+function policy_quantities_r0_chain(s::AbstractVector{<:Real}, R::Matrix{Float64}, exits::Vector{Float64},
                               delay::Delay)
     delay.kind in (:exp, :det) || error("r = 0 needs continuous inspection with a delay (exp or det), got $(delay.kind)")
     n = length(s)
@@ -293,7 +298,8 @@ end
     ltmc(p_fail, e_nfail, e_trep, n; ratio, setup = 0.0, c_sys = 1.0) -> Vector{Float64}
 
 Long-term mean cost for each trigger r, with repair cost
-c_cmp(j) = c_setup + j c_cmp for j failed components, where
+c_set + j c_comp for j failed components, plus c_sys if the system failed
+(def:cost; `c_setup` = c_set, `c_cmp` = c_comp below), where
 `ratio` = n c_cmp / c_sys and `setup` = c_setup / c_sys (both relative to the
 system failure cost):
 

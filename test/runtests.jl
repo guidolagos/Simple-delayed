@@ -85,26 +85,33 @@ function read_ltmc_reference(path)
     return cases
 end
 
+# Production engine: closed forms of the paper in BigFloat (closed_forms.jl).
 quantities0(sysid, model, beta, kind, value; systems) = begin
     sys = get_system(systems, sysid)
-    s = Float64.(read_signature_file(signature_path(sys)).s)
-    R, ex = transition_rates(lfmo_model(model, beta), ncomponents(sys))
-    policy_quantities_r0(s, R, ex, Delay(kind, value))
+    s = read_signature_file(signature_path(sys)).s
+    policy_quantities_r0(s, closed_forms(lfmo_model(model, beta), ncomponents(sys)), Delay(kind, value))
 end
 
-# Parametric pass helpers for the optimal-policy tests
+# Parametric pass helpers for the optimal-policy tests; cf.R, cf.exits are the chain rates
 function setup_row(systems, sysid, model, beta)
     sys = get_system(systems, sysid)
     sf = read_signature_file(signature_path(sys))
-    R, ex = transition_rates(lfmo_model(model, beta), ncomponents(sys))
-    return sys, sf, R, ex
+    cf = closed_forms(lfmo_model(model, beta), ncomponents(sys))
+    return sys, sf, cf
 end
 
 quantities(sysid, model, beta, kind, value; systems) = begin
     sys = get_system(systems, sysid)
+    s = read_signature_file(signature_path(sys)).s
+    policy_quantities(s, closed_forms(lfmo_model(model, beta), ncomponents(sys)), Delay(kind, value))
+end
+
+# Check engine: survivor-count chain in Float64 (ltmc.jl).
+quantities_chain(sysid, model, beta, kind, value; systems) = begin
+    sys = get_system(systems, sysid)
     s = Float64.(read_signature_file(signature_path(sys)).s)
     R, ex = transition_rates(lfmo_model(model, beta), ncomponents(sys))
-    policy_quantities(s, R, ex, Delay(kind, value))
+    rout_quantities_chain(s, R, ex, Delay(kind, value))
 end
 
 @testset "SimpleDelayed" begin
@@ -258,12 +265,15 @@ end
         @test et[5] ≈ 0.2 * ET[2] + 0.6 * ET[3] + 0.2 * ET[4]
         # series system of n components: fails at the first failure, whatever r and delay
         sys = mksys([("Start", "a"), ("a", "b"), ("b", "End")])
-        s = Float64.(signature(count_working_states(sys)))
-        R, ex = transition_rates(lfmo_model("LFMO-G", "0.2"), 3)
+        s = signature(count_working_states(sys))
+        cf = closed_forms(lfmo_model("LFMO-G", "0.2"), 3)
         for d in (Delay(:none, 0), Delay(:exp, 0.3), Delay(:det, 0.3), Delay(:insp, 0.3))
-            pf, en, et = policy_quantities(s, R, ex, d)
+            pf, en, et = policy_quantities(s, cf, d)
             @test all(≈(1), pf)
-            @test all(≈(1 / ex[1]), et)
+            @test all(≈(1 / cf.exits[1]), et)
+            pf, en, et = policy_quantities_chain(Float64.(s), cf.R, cf.exits, d)
+            @test all(≈(1), pf)
+            @test all(≈(1 / cf.exits[1]), et)
         end
     end
 
@@ -272,6 +282,14 @@ end
         @test length(ref) == 43
         @test count(((k, v),) -> v[1][1] == 0, ref) == 20      # r = 0 for the exp and det cases
         for ((sysid, model, beta, kind, value), vals) in ref
+            # the chain engine against the same independent reference
+            rsc, pfc, enc, etc = quantities_chain(sysid, model, beta, kind, parse(Float64, value); systems = systems)
+            for (r, p, e, t) in vals
+                i = findfirst(==(Int(r)), rsc)
+                @test isapprox(pfc[i], p; rtol = 1e-10, atol = 1e-13)
+                @test isapprox(enc[i], e; rtol = 1e-10)
+                @test isapprox(etc[i], t; rtol = 1e-10)
+            end
             pf, en, et = quantities(sysid, model, beta, kind, parse(Float64, value); systems = systems)
             for (r, p, e, t) in vals
                 r = Int(r)
@@ -287,6 +305,53 @@ end
                 end
             end
         end
+    end
+
+    @testset "closed forms vs. survivor-count chain (all delays, n up to 30)" begin
+        # (system, n): 1 (5), 5 (12), 7 (21), 13 (30), 19 (30)
+        for (sysid, model, beta) in ((1, "LFMO-C", "0.2"), (5, "BFR", "0.01"), (7, "LFMO-IG", "0.5"),
+                                     (13, "LFMO-S", "0.2"), (19, "LSh", "0.5"), (13, "Exp", "0"),
+                                     (19, "LFMO-G", "0.05"), (13, "BFR", "0.2"))
+            sys, sf, cf = setup_row(systems, sysid, model, beta)
+            for d in (Delay(:none, 0), Delay(:exp, 0.01), Delay(:exp, 1.0), Delay(:det, 0.01), Delay(:det, 1.0),
+                      Delay(:insp, 0.01), Delay(:insp, 1.0))
+                rs, pf, en, et = rout_quantities(sf.s, cf, d)
+                rsc, pfc, enc, etc = rout_quantities_chain(Float64.(sf.s), cf.R, cf.exits, d)
+                @test rs == rsc
+                @test max_diff(pf, pfc; relative = false) < 1e-12
+                @test max_diff(en, enc; relative = true) < 1e-12
+                @test max_diff(et, etc; relative = true) < 1e-12
+                T = call_tables(cf, d); Tc = call_tables_chain(cf.R, cf.exits, d)
+                for (a, b) in ((T.pf, Tc.pf), (T.pN, Tc.pN), (T.enF, Tc.enF))
+                    @test max_diff(a, b; relative = false) < 1e-12
+                end
+                for (a, b) in ((T.enA, Tc.enA), (T.ell, Tc.ell))
+                    @test max_diff(a, b; relative = true) < 1e-12
+                end
+            end
+        end
+        # the precision is enough: 256 and 512 bits agree far beyond Float64 (n = 30)
+        m = lfmo_model("BFR", "0.2")
+        cf256 = closed_forms(m, 30); cf512 = closed_forms(m, 30; precision = 512)
+        @test cf256.prec == CLOSED_PRECISION == 256 && cf512.prec == 512
+        for d in (Delay(:exp, 0.01), Delay(:det, 0.01), Delay(:insp, 0.01))
+            rs, P, E, T = kout_quantities(cf256, delay_forms(cf256, d), d.kind)
+            _, P2, E2, T2 = kout_quantities(cf512, delay_forms(cf512, d), d.kind)
+            @test maximum(abs.(P .- P2)) < 1e-50
+            @test maximum(abs.(E .- E2) ./ E2) < 1e-50
+            @test maximum(abs.(T .- T2) ./ T2) < 1e-50
+        end
+        # ... whereas in Float64 the same closed forms are useless for n = 30: the
+        # alternating sum for P(N(t) = f) (eq:PNwt) is off by orders of magnitude
+        Psi = [Float64(psi(m, x)) for x in 0:30]
+        f, w, t = 25, 30, 0.01
+        naive = sum(binomial(w, l) * binomial(l, w - f) * (-1)^(l - (w - f)) * exp(-t * Psi[l + 1]) for l in (w - f):w)
+        exact = setprecision(BigFloat, 256) do
+            Pb = [psi(m, x) for x in 0:30]
+            Float64(sum(binomial(w, l) * binomial(l, w - f) * (-1)^(l - (w - f)) * exp(-t * Pb[l + 1]) for l in (w - f):w))
+        end
+        @test exact > 0
+        @test abs(naive - exact) > 100 * exact
     end
 
     @testset "LTMC quantities: vanishing delays recover the no-delay case" begin
@@ -338,6 +403,8 @@ end
         @test isapprox(out.p_fail, [v[2] for v in ref]; rtol = 1e-10)
         @test out.meta["model"] == "LFMO-C"
         @test out.meta["engine_version"] == string(ENGINE_VERSION)
+        @test parse(Float64, out.meta["engine_check_prob"]) < 1e-12
+        @test parse(Float64, out.meta["engine_check_rel"]) < 1e-12
         @test length(readdir(dir)) == 1                    # no leftover temporary file
         # inspections: no r = 0
         row = grid[findfirst(g -> g.system == 1 && g.model == "Exp" && g.delay_type == "insp", grid)]
@@ -347,12 +414,13 @@ end
 
     @testset "optimal policies: after-call quantities" begin
         for (sysid, model, beta) in ((1, "LFMO-C", "0.2"), (5, "BFR", "0.5"), (13, "LFMO-S", "0.05"))
-            sys, sf, R, ex = setup_row(systems, sysid, model, beta)
+            sys, sf, cf = setup_row(systems, sysid, model, beta)
+            R, ex = cf.R, cf.exits
             n = ncomponents(sys); s = Float64.(sf.s)
             for d in (Delay(:exp, 0.3), Delay(:det, 0.1), Delay(:exp, 3.0), Delay(:det, 1.0))
-                cm = CountModel(sf.W, R, ex, d)
+                cm = CountModel(sf.W, cf, d)
                 # a call at f = 0 is the r = 0 policy of the LTMC engine (different code path)
-                pf0, en0, et0 = policy_quantities_r0(s, R, ex, d)
+                pf0, en0, et0 = policy_quantities_r0(sf.s, cf, d)
                 @test isapprox(cm.pf[1], pf0; rtol = 1e-11, atol = 1e-14)
                 @test isapprox(cm.en[1], en0; rtol = 1e-11)
                 @test isapprox(cm.ell[1], et0; rtol = 1e-11)
@@ -380,7 +448,7 @@ end
                 end
             end
             # inspections: one period either ends at an inspection or with a system failure
-            cm = CountModel(sf.W, R, ex, Delay(:insp, 0.3))
+            cm = CountModel(sf.W, cf, Delay(:insp, 0.3))
             for f in 0:(n - 1)
                 cm.Sbar[f + 1] > 0 && @test isapprox(sum(cm.q[f + 1]) + cm.pf[f + 1], 1; atol = 1e-12)
             end
@@ -389,14 +457,14 @@ end
 
     @testset "optimal policies: forced thresholds reproduce the r-out-of-n engine" begin
         for (sysid, model, beta) in ((3, "LFMO-G", "0.2"), (5, "LSh", "0.5"), (11, "BFR", "0.2"))
-            sys, sf, R, ex = setup_row(systems, sysid, model, beta)
-            n = ncomponents(sys); s = Float64.(sf.s)
+            sys, sf, cf = setup_row(systems, sysid, model, beta)
+            n = ncomponents(sys)
             S = StateSpace(sys)
             @test working_counts(S) == sf.W
             for d in (Delay(:none, 0), Delay(:exp, 0.3), Delay(:det, 0.1), Delay(:insp, 0.3))
-                rs, pf, en, et = rout_quantities(s, R, ex, d)
+                rs, pf, en, et = rout_quantities(sf.s, cf, d)
                 @test rs == (d.kind in (:exp, :det) ? collect(0:n) : collect(1:n))
-                cm = CountModel(sf.W, R, ex, d)
+                cm = CountModel(sf.W, cf, d)
                 pre = state_precompute(S, cm)
                 costs = Costs(n; ratio = 1.0, setup = 0.1)
                 for (i, r) in enumerate(rs)
@@ -419,17 +487,17 @@ end
         cache = Dict()
         for r in rows
             sysid = parse(Int, r[col("system")])
-            sys, sf, R, ex = setup_row(systems, sysid, r[col("model")], r[col("beta")])
+            sys, sf, cf = setup_row(systems, sysid, r[col("model")], r[col("beta")])
             n = ncomponents(sys)
             d = Delay(r[col("delay_type")], parse(Float64, r[col("delay")]))
             costs = Costs(n; ratio = parse(Float64, r[col("ratio")]), setup = parse(Float64, r[col("setup")]))
-            rs, pf, en, et = rout_quantities(Float64.(sf.s), R, ex, d)
+            rs, pf, en, et = rout_quantities(sf.s, cf, d)
             L = (costs.c_set .+ costs.c_cmp .* en .+ costs.c_sys .* pf) ./ et
             ib = argmin(L)
             gr = parse(Float64, r[col("ltmc_best_r")])
             @test isapprox(L[ib], gr; rtol = 1e-11)
             @test isapprox(L[findfirst(==(parse(Int, r[col("best_r")])), rs)], gr; rtol = 1e-11)
-            cm = CountModel(sf.W, R, ex, d)
+            cm = CountModel(sf.W, cf, d)
             gc, act, _ = dinkelbach(g -> count_pass(cm, costs, g), L[ib])
             @test isapprox(gc, parse(Float64, r[col("ltmc_count")]); rtol = 1e-11)
             refpol = r[col("count_policy")]
@@ -448,12 +516,12 @@ end
 
     @testset "optimal policies: [Exp] with continuous inspection is a threshold policy" begin
         for sysid in (2, 6, 9)
-            sys, sf, R, ex = setup_row(systems, sysid, "Exp", "0")
+            sys, sf, cf = setup_row(systems, sysid, "Exp", "0")
             n = ncomponents(sys)
             for d in (Delay(:none, 0), Delay(:exp, 0.3), Delay(:det, 0.1)), (ρ, σ) in ((0.5, 0.05), (2.0, 0.2), (10.0, 0.5))
-                cm = CountModel(sf.W, R, ex, d)
+                cm = CountModel(sf.W, cf, d)
                 costs = Costs(n; ratio = ρ, setup = σ)
-                rs, pf, en, et = rout_quantities(Float64.(sf.s), R, ex, d)
+                rs, pf, en, et = rout_quantities(sf.s, cf, d)
                 L = (costs.c_set .+ costs.c_cmp .* en .+ costs.c_sys .* pf) ./ et
                 gc, act, _ = dinkelbach(g -> count_pass(cm, costs, g), minimum(L))
                 @test is_threshold(act, d.kind)
@@ -477,6 +545,8 @@ end
             res = read_optimal_output(row_output_path(row.row_id; dir = dir))
             @test length(res.rows) == length(OPT_RATIOS) * length(OPT_SETUPS)
             @test res.meta["state_based"] == string(sysid != 13)
+            @test parse(Float64, res.meta["engine_check_prob"]) < 1e-12
+            @test parse(Float64, res.meta["engine_check_rel"]) < 1e-12
             c(name) = findfirst(==(name), res.header)
             for r in res.rows
                 gr, gc, gs = parse.(Float64, (r[c("ltmc_best_r")], r[c("ltmc_count")], r[c("ltmc_state")]))
