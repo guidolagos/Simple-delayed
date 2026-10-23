@@ -205,7 +205,7 @@ and checks the computed policies by Monte Carlo simulation of the networks;
 checks the closed forms against the chain (all models for n = 5 and 9, all delays
 up to n = 30), that the passes with stopping set {r, ..., n-1} reproduce the
 r-out-of-n costs (count- and state-based, every r), that [Exp] with continuous
-inspection has a threshold optimum (all 36 cost pairs), that the exponential-delay
+inspection has an optimum equivalent to a threshold policy, with the cost of the best r (all 36 cost pairs), that the exponential-delay
 tables agree with the recursion eq:ccall exp, and that the row files contain
 exactly the closed-form values. `optimal_port.py` is a Python port of
 `src/optimal.jl` used to validate the design.

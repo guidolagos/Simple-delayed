@@ -533,7 +533,7 @@ end
         end
     end
 
-    @testset "optimal policies: [Exp] with continuous inspection is a threshold policy" begin
+    @testset "optimal policies: [Exp] with continuous inspection is equivalent to a threshold policy" begin
         for sysid in (2, 6, 9)
             sys, sf, cf = setup_row(systems, sysid, "Exp", "0")
             n = ncomponents(sys)
@@ -544,7 +544,16 @@ end
                 costs = Costs(n; ratio = ρ, setup = σ)
                 L = (costs.c_set .+ costs.c_cmp .* en .+ costs.c_sys .* pf) ./ et
                 gc, act, _ = dinkelbach(g -> count_pass(cm, costs, g), minimum(L))
-                @test is_threshold(act, d.kind)
+                # With single failures the count moves 0, 1, 2, ... one step at a time, so the
+                # policy stops at its first call, r; beyond r its actions are never used (they
+                # may be "continue", e.g. with a long delay), and it is equivalent to the
+                # r-out-of-n policy (Remark rmk:count vs rout).
+                r = something(findfirst(==(Int8(1)), act), n + 1) - 1
+                _, c, l = count_pass(cm, costs, 0.0; forced = f -> f >= r)
+                ok = isapprox(c / l, gc; rtol = 1e-11) && isapprox(gc, minimum(L); rtol = 1e-11)
+                ok || println("[Exp] threshold test: system $(sysid), $(d), (ρ, σ) = ($(ρ), $(σ)): ",
+                              "policy $(policy_string(act)), g_count $(gc), r = $(r) gives $(c / l), best r $(minimum(L))")
+                @test isapprox(c / l, gc; rtol = 1e-11)          # equivalent to the r-out-of-n policy
                 @test isapprox(gc, minimum(L); rtol = 1e-11)    # hence no better than the best r
                 end
             end
