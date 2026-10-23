@@ -330,6 +330,27 @@ end
                 end
             end
         end
+        # small n, every model family and beta: closed forms and chain agree to ~1e-14
+        for sysid in (1, 4), (model, beta) in (("Exp", "0"), ("LFMO-C", "0.01"), ("LFMO-G", "0.5"),
+                                               ("LFMO-IG", "0.2"), ("LFMO-S", "0.05"), ("BFR", "0.1"),
+                                               ("LSh", "0.2"))
+            sys, sf, cf = setup_row(systems, sysid, model, beta)
+            for d in (Delay(:none, 0), Delay(:exp, 0.03), Delay(:exp, 1.0), Delay(:det, 0.03), Delay(:det, 1.0),
+                      Delay(:insp, 0.03), Delay(:insp, 1.0))
+                rs, pf, en, et = rout_quantities(sf.s, cf, d)
+                _, pfc, enc, etc = rout_quantities_chain(Float64.(sf.s), cf.R, cf.exits, d)
+                @test max_diff(pf, pfc; relative = false) < 1e-13
+                @test max_diff(en, enc; relative = true) < 1e-13
+                @test max_diff(et, etc; relative = true) < 1e-13
+                T = call_tables(cf, d); Tc = call_tables_chain(cf.R, cf.exits, d)
+                for (a, b) in ((T.pf, Tc.pf), (T.pN, Tc.pN), (T.enF, Tc.enF))
+                    @test max_diff(a, b; relative = false) < 1e-13
+                end
+                for (a, b) in ((T.enA, Tc.enA), (T.ell, Tc.ell))
+                    @test max_diff(a, b; relative = true) < 1e-13
+                end
+            end
+        end
         # the precision is enough: 256 and 512 bits agree far beyond Float64 (n = 30)
         m = lfmo_model("BFR", "0.2")
         cf256 = closed_forms(m, 30); cf512 = closed_forms(m, 30; precision = 512)
@@ -471,10 +492,8 @@ end
                     L = (costs.c_set + costs.c_cmp * en[i] + costs.c_sys * pf[i]) / et[i]
                     _, c, l = count_pass(cm, costs, 0.0; forced = f -> f >= r)
                     @test isapprox(c / l, L; rtol = 1e-11)
-                    if r in (0, 1, 2, n)
-                        _, c, l = state_pass(S, cm, pre, costs, 0.0; forced = (x, f) -> f >= r)
-                        @test isapprox(c / l, L; rtol = 1e-11)
-                    end
+                    _, c, l = state_pass(S, cm, pre, costs, 0.0; forced = (x, f) -> f >= r)
+                    @test isapprox(c / l, L; rtol = 1e-11)
                 end
             end
         end
@@ -518,14 +537,16 @@ end
         for sysid in (2, 6, 9)
             sys, sf, cf = setup_row(systems, sysid, "Exp", "0")
             n = ncomponents(sys)
-            for d in (Delay(:none, 0), Delay(:exp, 0.3), Delay(:det, 0.1)), (ρ, σ) in ((0.5, 0.05), (2.0, 0.2), (10.0, 0.5))
+            for d in (Delay(:none, 0), Delay(:exp, 0.01), Delay(:exp, 1.0), Delay(:det, 0.01), Delay(:det, 1.0))
                 cm = CountModel(sf.W, cf, d)
-                costs = Costs(n; ratio = ρ, setup = σ)
                 rs, pf, en, et = rout_quantities(sf.s, cf, d)
+                for ρ in OPT_RATIOS, σ in OPT_SETUPS
+                costs = Costs(n; ratio = ρ, setup = σ)
                 L = (costs.c_set .+ costs.c_cmp .* en .+ costs.c_sys .* pf) ./ et
                 gc, act, _ = dinkelbach(g -> count_pass(cm, costs, g), minimum(L))
                 @test is_threshold(act, d.kind)
                 @test isapprox(gc, minimum(L); rtol = 1e-11)    # hence no better than the best r
+                end
             end
         end
         @test !is_threshold(Int8[0, 0, 1, 0, -1], :exp)
@@ -543,11 +564,40 @@ end
             @test run_optimal_row(row; systems = systems, dir = dir, cache = cache) == :done
             @test run_optimal_row(row; systems = systems, dir = dir, cache = cache) == :skipped
             res = read_optimal_output(row_output_path(row.row_id; dir = dir))
+            @test res.header == OPTIMAL_HEADER
+            @test res.meta["optimal_version"] == string(OPTIMAL_VERSION) == "3"
             @test length(res.rows) == length(OPT_RATIOS) * length(OPT_SETUPS)
             @test res.meta["state_based"] == string(sysid != 13)
             @test parse(Float64, res.meta["engine_check_prob"]) < 1e-12
             @test parse(Float64, res.meta["engine_check_rel"]) < 1e-12
+            for k in ("seconds", "seconds_rout", "seconds_tables", "seconds_states", "seconds_state_pre",
+                      "seconds_chain", "maxrss_mb")
+                @test parse(Float64, res.meta[k]) >= 0
+            end
+            @test parse(Float64, res.meta["seconds_rout"]) > 0
+            @test res.meta["states_cached"] in ("true", "false")
+            @test parse(Int, res.meta["n_working_states"]) == sum(read_signature_file(signature_path(get_system(systems, sysid))).W)
             c(name) = findfirst(==(name), res.header)
+            # the row holds exactly the closed-form values (the chain is only a check)
+            sys, sf, cf = setup_row(systems, sysid, model, "0.2")
+            n = ncomponents(sys)
+            d = Delay(kind, 0.1)
+            rs, pf, en, et = rout_quantities(sf.s, cf, d)
+            cm = CountModel(sf.W, cf, d)
+            S = sysid == 13 ? nothing : StateSpace(sys)
+            pre = S === nothing ? nothing : state_precompute(S, cm)
+            for r in res.rows
+                costs = Costs(n; ratio = parse(Float64, r[c("ratio")]), setup = parse(Float64, r[c("setup")]))
+                L = (costs.c_set .+ costs.c_cmp .* en .+ costs.c_sys .* pf) ./ et
+                @test r[c("ltmc_best_r")] == repr(minimum(L))
+                gc, _, itc = dinkelbach(g -> count_pass(cm, costs, g), minimum(L))
+                @test r[c("ltmc_count")] == repr(gc) && r[c("iters_count")] == string(itc)
+                @test parse(Float64, r[c("seconds_count")]) >= 0
+                if S !== nothing
+                    gs, _, _ = dinkelbach(g -> state_pass(S, cm, pre, costs, g), gc)
+                    @test r[c("ltmc_state")] == repr(gs)
+                end
+            end
             for r in res.rows
                 gr, gc, gs = parse.(Float64, (r[c("ltmc_best_r")], r[c("ltmc_count")], r[c("ltmc_state")]))
                 @test gc <= gr * (1 + 1e-12)
@@ -556,5 +606,21 @@ end
             end
         end
         @test length(readdir(dir)) == 3
+        # readers refuse other versions; compare_optimal.jl may read them explicitly
+        lines = String.(split(read(joinpath(dir, first(readdir(dir))), String), '\n'))
+        for (i, l) in enumerate(lines)
+            l == "# optimal_version = 3" && (lines[i] = "# optimal_version = 2")
+        end
+        hdr = findfirst(l -> startswith(l, "ratio,"), lines)
+        for i in hdr:length(lines)                    # drop the 8th field, seconds_count (version 3)
+            isempty(lines[i]) && continue
+            f = split(lines[i], ','); deleteat!(f, 8); lines[i] = join(f, ',')
+        end
+        p = joinpath(mktempdir(), "row_00001.csv")
+        write(p, join(lines, '\n'))
+        @test_throws ErrorException read_optimal_output(p)
+        @test read_optimal_output(p; versions = (2, 3)).header == filter(!=("seconds_count"), OPTIMAL_HEADER)
+        # warm-up leaves nothing behind and returns a time
+        @test optimal_warmup(systems; state_max_n = 14) > 0
     end
 end

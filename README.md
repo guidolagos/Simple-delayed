@@ -158,106 +158,89 @@ computes
 - the optimal **count-based** policy (Dinkelbach, alg:dinkelbach, with the passes
   alg:count exp, its deterministic version and alg:count fixed), for all systems;
 - the optimal **state-based** policy (alg:state exp, alg:state det,
-  alg:state fixed), which visits the 2^n states with O(n²) work each: for
-  n ≤ 14 in the main run, for 15 ≤ n ≤ 22 (systems 7, 16, 18) in a separate
-  large run, and optionally for n = 24, 26, 27 (systems 20, 14, 17) in the
-  runs of "Largest systems" below; not for n = 30 (systems 13, 19).
+  alg:state fixed), which visits the 2^n states with O(n²) work each, for the 18
+  systems with n ≤ `OPT_STATE_MAX_N` = 27; not for n = 30 (systems 13, 19).
 
 The `none` delay is included as continuous inspection with D = 0 (calling the
 crew is repairing at once, and it is not allowed with no failed component).
-Each row writes `output/optimal/row_<id>.csv` (or `output/optimal_large/`), one
-line per cost pair with `best_r, ltmc_best_r, ltmc_corrective, ltmc_count,
+Each row writes `output/optimal/row_<id>.csv`, one line per cost pair with
+`best_r, ltmc_best_r, ltmc_corrective, ltmc_count, iters_count, seconds_count,
 count_policy` (`C` call, `.` continue, `-` unreachable, for f = 0..n-1),
 `count_threshold` (whether the count policy is an r-out-of-n one), `ltmc_state`,
-`state_mixed_levels` (levels f where the state policy calls at some but not all
-working states) and `state_calls` (calls/working states per f). Every row checks
-state ≤ count ≤ best r-out-of-n.
+`iters_state`, `state_mixed_levels` (levels f where the state policy calls at
+some but not all working states), `state_calls` (calls/working states per f) and
+`seconds_state`. Every row checks state ≤ count ≤ best r-out-of-n.
 
-The after-call and one-period tables (prop:after call det, lem:period) and the
-r-out-of-n quantities come from the closed forms in BigFloat (`call_tables`,
-`rout_quantities`), with the chain engine as a recorded check
-(`engine_check_*`), as for the LTMC grid. `# optimal_version = 2`.
+Engine. Everything the policies use comes from the closed forms in BigFloat: the
+r-out-of-n quantities (`rout_quantities`), and the after-call and one-period
+tables (`call_tables`: prop:after call det for the constant delay, eq:EminDT,
+eq:Ddet_Tkn and eq:PNcDdetT for the exponential delay, lem:period for
+inspections), which feed both the count-based and the state-based passes; the
+transition rates of def:lambda are computed in 512 bits. The chain engine
+(`*_chain`: resolvent and uniformization) is run afterwards in every row only as
+a check (`engine_check_*`, `seconds_chain`); none of its values is used.
 
-Versions. Version 1 files were computed with the chain tables. The state-based
-results of `output/optimal_large/` (n = 21..27, ~1,900 CPU-hours) were not
-recomputed: `scripts/summarize_optimal.jl` takes the r-out-of-n and count-based
-columns of every row from `output/optimal/` (version 2), takes only the
-state-based columns from `output/optimal_large/` (version 1 accepted there, and
-only there), and errors if the r-out-of-n and count-based columns of both files
-differ by more than 1e-9 (relative); it prints the largest difference. The
-tables of both engines agree to about 1e-15 (`scripts/engine_check.jl`).
+Timings. Every row records, in full precision, `seconds_rout` (closed forms,
+computed afresh in every row, delay forms and r-out-of-n quantities),
+`seconds_tables` (after-call tables and count model), `seconds_states` (state
+space; 0 when cached from the previous row of the same system, see
+`states_cached`), `seconds_state_pre`, per cost pair `seconds_count` and
+`seconds_state` (Dinkelbach's method, `iters_*` passes), and `maxrss_mb`, the
+peak memory of the process when the row is finished. Each array task first runs
+four rows of system 1 in a temporary directory (`optimal_warmup`), so that the
+times exclude compilation.
+
+Versions. `# optimal_version = 3`. Version 1 (commit 2a17dba) computed the tables
+with the chain; version 2 (commit 67023db) with the closed forms, but kept the
+state-based policies for n ≥ 21 of version 1 in a separate directory. Version 3
+computes all of them in one run, in `output/optimal/`. Readers refuse other
+versions, except `scripts/compare_optimal.jl`, which compares new and old outputs.
 
 Validation: `test/reference/optimal_reference.py` is an independent mpmath
 implementation that follows the paper literally (recursion eq:ccall exp, closed
 forms of prop:after call det and lem:period, sub-state sums enumerated
 directly), checks the count-based optimum by brute force over all stopping sets,
 and checks the computed policies by Monte Carlo simulation of the networks;
-`optimal_reference.csv` (64 cases) is compared by `Pkg.test()`, which also checks
-that forcing r-out-of-n actions in the passes reproduces the LTMC engine, that
-[Exp] with continuous inspection has a threshold optimum, and the exponential
-delay recursion. `optimal_port.py` is a Python port of `src/optimal.jl` used to
-validate the design (agrees with the reference to 1e-15, also at n = 30 against
-60-digit closed forms).
+`optimal_reference.csv` (64 cases) is compared by `Pkg.test()`. `Pkg.test()` also
+checks the closed forms against the chain (all models for n = 5 and 9, all delays
+up to n = 30), that the passes with stopping set {r, ..., n-1} reproduce the
+r-out-of-n costs (count- and state-based, every r), that [Exp] with continuous
+inspection has a threshold optimum (all 36 cost pairs), that the exponential-delay
+tables agree with the recursion eq:ccall exp, and that the row files contain
+exactly the closed-form values. `optimal_port.py` is a Python port of
+`src/optimal.jl` used to validate the design.
 
 ### Run on the cluster
 
+Sizes: n ≤ 14: 12 systems, 5,952 rows; n = 21: systems 7 and 16 (rows 2977-3472,
+7441-7936); n = 22: system 18 (8433-8928); n = 24: system 20 (9425-9920);
+n = 26: system 14 (6449-6944); n = 27: system 17 (7937-8432); n = 30: systems 13
+and 19 (5953-6448, 8929-9424), count-based only. Measured on compute-slim
+(version 2/1 runs): per row, ~2 min for n = 21-22, ~20 min (n = 24), ~30 min
+(26), ~3 h (27); peak memory 0.6, 0.9, 2.6, 6.8 and 13.5 GB.
+
     git pull
     module purge; module load softwares; module load Julia/1.10.4-linux-x86_64
-    srun --partition=compute-slim --ntasks=1 --cpus-per-task=1 --mem=2G --time=00:30:00 \
-        julia --project=. -e 'using Pkg; Pkg.precompile(); Pkg.test()'
-    # 1. LTMC grid again (adds r = 0); old outputs of engine version 1 must go
-    mv output/ltmc output/ltmc_v1
-    sbatch templates/run_array.sbatch
-    # 2. optimal policies, main run (state-based for n <= 14)
-    sbatch --array=1 --export=ALL,EXTRA="--rows=1:40" templates/optimal_array.sbatch   # pilot
-    sbatch templates/optimal_array.sbatch
-    # 3. state-based policies for n = 21, 22: time one row first (system 18 is rows 8433-8928)
-    srun --partition=compute-slim --ntasks=1 --cpus-per-task=1 --mem=2G --time=02:00:00 \
-        julia --project=. scripts/run_optimal.jl 1 1 --rows=8433:8433 --min-n=15 --max-n=22 \
-        --state-max-n=22 --out=large --verbose
-    sbatch templates/optimal_large.sbatch      # adjust --time to the pilot first
+    srun --partition=compute-slim --ntasks=1 --cpus-per-task=1 --mem=2G --time=00:45:00 \
+        julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile(); Pkg.test()'
+    # old outputs out of the way (kept for scripts/compare_optimal.jl)
+    mv output/optimal output/optimal_v2; mv output/optimal_large output/optimal_large_v1
+    # pilots: one row per size (LFMO-C, β = 0.2, constant delay 0.1), then sacct
+    sbatch --job-name=pilot-n27 --array=1 --mem=28G --time=08:00:00 --export=ALL,NMIN=27,NMAX=27,NCHUNKS=1,EXTRA="--rows=8009:8009 --verbose" templates/optimal.sbatch
+    # production: see templates/optimal.sbatch; one array per size
+    sbatch --job-name=opt-n27 --array=1-248%40 --mem=28G --time=16:00:00 --export=ALL,NMIN=27,NMAX=27,NCHUNKS=248 templates/optimal.sbatch
     # checks
-    grep -l "failed [1-9]" logs/ltmc_*.out logs/optimal*.out
-    ls output/ltmc | wc -l; ls output/optimal | wc -l; ls output/optimal_large | wc -l   # 9920, 9920, 1488
+    grep -l "failed [1-9]" logs/opt-*.out
+    ls output/optimal | wc -l                                  # 9920 when complete
+    julia --project=. scripts/compare_optimal.jl output/optimal_large_v1 output/optimal_v2
 
-Then, on your own machine:
+(the last command through `srun`). Then, on your own machine:
 
-    rsync -av uai:Simple-delayed/output/ltmc/ output/ltmc/
     rsync -av uai:Simple-delayed/output/optimal/ output/optimal/
-    rsync -av uai:Simple-delayed/output/optimal_large/ output/optimal_large/
-    rsync -av uai:Simple-delayed/output/benchmark/ output/benchmark/
-    julia --project=. scripts/summarize.jl            # output/summary.csv
-    julia --project=. scripts/summarize_optimal.jl    # output/optimal_summary.csv
+    julia --project=. scripts/summarize_optimal.jl    # output/optimal_summary.csv, output/optimal_rows.csv
 
-### Largest systems (n = 24, 26, 27)
-
-Measured on compute-slim (2 × Xeon E5-2650): one state-based pass takes about
-0.9 s for n = 21 and 1.6 s for n = 22, a cost pair needs 3.5 passes on average,
-and a row has 36 cost pairs. The cost grows as n² 2ⁿ, so per row (496 rows per
-system), extrapolating:
-
-| n  | system | memory (est.) | one pass | one row  | 496 rows   | request                         |
-|----|--------|---------------|----------|----------|------------|---------------------------------|
-| 24 | 20     | ~2 GB         | ~8 s     | ~16 min  | ~130 CPU-h | `--mem=4G`,  50 tasks, 12 h     |
-| 26 | 14     | ~7 GB         | ~35 s    | ~1.2 h   | ~600 CPU-h | `--mem=16G`, 100 tasks, 24 h    |
-| 27 | 17     | ~14 GB        | ~75 s    | ~2.6 h   | ~1300 CPU-h| `--mem=32G`, 124 tasks %30, 48 h |
-| 30 | 13, 19 | ~115 GB       | ~12 min  | ~26 h    | ~26000 CPU-h | not run (benchmark only)      |
-
-Pilot one row of each size first and adjust `--mem` (sacct MaxRSS) and `--time`:
-
-    # pilots (first row of each system: Exp, no delay)
-    sbatch --array=1 --mem=4G  --time=02:00:00 --export=ALL,NMIN=24,NMAX=24,NCHUNKS=1,EXTRA="--rows=9425:9425 --verbose" templates/optimal_xl.sbatch
-    sbatch --array=1 --mem=16G --time=06:00:00 --export=ALL,NMIN=26,NMAX=26,NCHUNKS=1,EXTRA="--rows=6449:6449 --verbose" templates/optimal_xl.sbatch
-    sbatch --array=1 --mem=32G --time=12:00:00 --export=ALL,NMIN=27,NMAX=27,NCHUNKS=1,EXTRA="--rows=7937:7937 --verbose" templates/optimal_xl.sbatch
-    sacct -j <jobid> -o JobID,State,Elapsed,MaxRSS,ReqMem
-    # full runs (the pilot row is skipped)
-    sbatch --array=1-50      --mem=4G  --time=12:00:00 --export=ALL,NMIN=24,NMAX=24,NCHUNKS=50  templates/optimal_xl.sbatch
-    sbatch --array=1-100     --mem=16G --time=24:00:00 --export=ALL,NMIN=26,NMAX=26,NCHUNKS=100 templates/optimal_xl.sbatch
-    sbatch --array=1-124%30  --mem=32G --time=48:00:00 --export=ALL,NMIN=27,NMAX=27,NCHUNKS=124 templates/optimal_xl.sbatch
-
-`%30` limits the n = 27 run to 30 simultaneous tasks (about 1 TB of memory), so
-that it does not take the whole partition. A task killed by `--time` loses only
-the row in progress; re-submit the same command to finish.
+The state-based timings for n = 30 come from the benchmark below (one cost pair,
+on compute-fat); the full runs would take ~1.5-2 days per row and ~106 GB.
 
 ### Runtime benchmark
 

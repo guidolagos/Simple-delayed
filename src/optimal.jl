@@ -37,11 +37,17 @@
 const OPT_RATIOS = COST_RATIOS
 const OPT_SETUPS = [0.05, 0.1, 0.2, 0.5]
 const OPTIMAL_DIR = joinpath(REPO_DIR, "output", "optimal")
-const OPTIMAL_LARGE_DIR = joinpath(REPO_DIR, "output", "optimal_large")
-# Version of the row files written by `run_optimal_row`.
-# 1: tables and r-out-of-n quantities from the survivor-count chain.
+# Version of the row files written by `run_optimal_row`; readers refuse other versions.
+# 1: tables and r-out-of-n quantities from the survivor-count chain (commit 2a17dba).
 # 2: from the closed forms in BigFloat, with the chain as a recorded check (engine_check_*).
-const OPTIMAL_VERSION = 2
+# 3: as 2, for all systems in one directory (state-based policies for n <= OPT_STATE_MAX_N),
+#    with the time of every step in full precision (seconds_rout, seconds_tables,
+#    seconds_count, seconds_state_pre, seconds_state, ...), the closed forms computed
+#    afresh in every row, and the peak memory of the process (maxrss_mb).
+const OPTIMAL_VERSION = 3
+# State-based policies are computed for the systems with n <= OPT_STATE_MAX_N (all but
+# the two systems with n = 30) by scripts/run_optimal.jl.
+const OPT_STATE_MAX_N = 27
 # 2^n states. Peak memory of a state-based row is about 33 2^n bytes plus four
 # (w+1) x binomial(n, w) Float64 matrices of the largest level: ~0.4 GB for n = 22,
 # ~7 GB for n = 26, ~14 GB for n = 27, ~115 GB for n = 30 (see README).
@@ -648,8 +654,11 @@ function rout_quantities_chain(s, R, exits, delay::Delay)
 end
 
 const OPTIMAL_HEADER = ["ratio", "setup", "best_r", "ltmc_best_r", "ltmc_corrective",
-                        "ltmc_count", "iters_count", "count_policy", "count_threshold",
+                        "ltmc_count", "iters_count", "seconds_count", "count_policy", "count_threshold",
                         "ltmc_state", "iters_state", "state_mixed_levels", "state_calls", "seconds_state"]
+
+_seconds(t0::UInt64) = (time_ns() - t0) / 1e9
+_maxrss_mb() = Sys.maxrss() / 2^20
 
 """
     run_optimal_row(row; systems, dir = OPTIMAL_DIR, state_max_n = 14, cache = Dict()) -> Symbol
@@ -658,48 +667,75 @@ For one grid row and every cost pair (OPT_RATIOS × OPT_SETUPS): the best
 r-out-of-n policy, the optimal count-based policy, and, if n <= `state_max_n`,
 the optimal state-based policy. Writes `dir/row_<row_id>.csv` atomically;
 returns `:skipped` if it exists. Errors if state <= count <= best r fails.
+
+All production values come from the closed forms in BigFloat: the r-out-of-n
+quantities (`rout_quantities`) and the after-call and one-period tables
+(`call_tables`), which feed both the count-based and the state-based passes.
+The survivor-count chain is run afterwards only as a check, timed separately.
+
+Timings (seconds, full precision; `time_ns`), in the metadata:
+`seconds_rout` = closed forms (with the 512-bit rates), delay forms and r-out-of-n
+quantities, all computed afresh for this row; `seconds_tables` = after-call tables
+and count model, given the delay forms; `seconds_states` = state space (0 if it
+was taken from `cache`, see `states_cached`); `seconds_state_pre` = per-state
+precomputation; `seconds_chain` = the check. Per cost pair: `seconds_count` and
+`seconds_state` = Dinkelbach's method (`iters_*` passes). `maxrss_mb` is the peak
+resident memory of the process when the row is finished. Only the state space is
+cached between rows (by `cache`), since it depends only on the system.
 """
 function run_optimal_row(row; systems::Vector{TwoTerminalSystem}, dir::AbstractString = OPTIMAL_DIR,
                          state_max_n::Integer = 14, cache::Dict = Dict(), verbose::Bool = false)
     path = row_output_path(row.row_id; dir = dir)
     isfile(path) && return :skipped
-    t0 = time()
+    t0 = time_ns()
     sys = get_system(systems, row.system)
     n = ncomponents(sys)
     sigfile = read_signature_file(signature_path(sys))
     s = Float64.(sigfile.s)
-    model = get!(cache, (:model, row.model, row.beta)) do
-        lfmo_model(row.model, row.beta)
-    end
-    cf = get!(cache, (:closed, row.model, row.beta, n)) do
-        closed_forms(model, n)
-    end
-    R, exits = cf.R, cf.exits
+    model = lfmo_model(row.model, row.beta)
     delay = Delay(row.delay_type, parse(Float64, row.delay))
+    # r-out-of-n quantities: closed forms, computed afresh (not cached) so that their
+    # time is that of one configuration
+    tr = time_ns()
+    cf = closed_forms(model, n)
     df = delay.kind == :none ? nothing : delay_forms(cf, delay)
     rs, pf, en, et = rout_quantities(sigfile.s, cf, delay; df = df)
+    seconds_rout = _seconds(tr)
+    # after-call and one-period tables (closed forms, sharing the delay forms)
+    tt = time_ns()
     T = call_tables(cf, delay; df = df)
-    cm = CountModel(sigfile.W, R, exits, T)
-    # independent check: the survivor-count chain engine (Float64)
-    t1 = time()
-    _, cpf, cen, cet = rout_quantities_chain(s, R, exits, delay)
-    Tc = call_tables_chain(R, exits, delay)
+    cm = CountModel(sigfile.W, cf.R, cf.exits, T)
+    seconds_tables = _seconds(tt)
+    # independent check: the survivor-count chain engine (Float64), not used below
+    tk = time_ns()
+    _, cpf, cen, cet = rout_quantities_chain(s, cf.R, cf.exits, delay)
+    Tc = call_tables_chain(cf.R, cf.exits, delay)
     check_prob = max(max_diff(pf, cpf; relative = false), max_diff(T.pf, Tc.pf; relative = false),
                      max_diff(T.pN, Tc.pN; relative = false), max_diff(T.enF, Tc.enF; relative = false))
     check_rel = max(max_diff(en, cen; relative = true), max_diff(et, cet; relative = true),
                     max_diff(T.enA, Tc.enA; relative = true), max_diff(T.ell, Tc.ell; relative = true))
-    seconds_chain = time() - t1
+    seconds_chain = _seconds(tk)
     check_prob <= 1e-9 && check_rel <= 1e-9 ||
         error("row $(row.row_id): closed forms and chain disagree (probabilities $(check_prob), relative $(check_rel))")
     do_state = n <= state_max_n
     S = pre = nothing
+    seconds_states = 0.0; states_cached = false; seconds_state_pre = 0.0
     if do_state
-        S = get!(cache, (:states, sys.id)) do
-            St = StateSpace(sys)
-            working_counts(St) == sigfile.W || error("$(sys.name): state space disagrees with signature file")
-            St
+        key = (:states, sys.id)
+        if haskey(cache, key)
+            S = cache[key]; states_cached = true
+        else
+            empty!(cache)                       # at most one state space in memory
+            GC.gc()
+            ts = time_ns()
+            S = StateSpace(sys)
+            seconds_states = _seconds(ts)
+            working_counts(S) == sigfile.W || error("$(sys.name): state space disagrees with signature file")
+            cache[key] = S
         end
+        tp = time_ns()
         pre = state_precompute(S, cm)
+        seconds_state_pre = _seconds(tp)
     end
     tol = 1e-9
     lines = String[]
@@ -707,39 +743,48 @@ function run_optimal_row(row; systems::Vector{TwoTerminalSystem}, dir::AbstractS
         costs = Costs(n; ratio = ρ, setup = σ)
         Lr = [(costs.c_set + costs.c_cmp * en[i] + costs.c_sys * pf[i]) / et[i] for i in eachindex(rs)]
         ib = argmin(Lr)
+        tc = time_ns()
         gc, actc, itc = dinkelbach(g -> count_pass(cm, costs, g), Lr[ib])
+        secc = _seconds(tc)
         gc <= Lr[ib] * (1 + tol) || error("row $(row.row_id): count-based optimum $(gc) > best r-out-of-n $(Lr[ib])")
         gs = NaN; its = 0; mixed = ""; callstr = ""; secs = 0.0
         if do_state
-            ts = time()
+            ts = time_ns()
             gs, (calls, working), its = dinkelbach(g -> state_pass(S, cm, pre, costs, g), gc)
-            secs = time() - ts
+            secs = _seconds(ts)
             gs <= gc * (1 + tol) || error("row $(row.row_id): state-based optimum $(gs) > count-based $(gc)")
             mixed = string(mixed_levels(calls, working))
             callstr = state_calls_string(calls, working)
             verbose && println("  ratio $(ρ) setup $(σ): state-based $(its) passes, $(round(secs; digits = 2)) s")
         end
-        push!(lines, join((ρ, σ, rs[ib], repr(Lr[ib]), repr(Lr[end]), repr(gc), itc, policy_string(actc),
-                           is_threshold(actc, delay.kind), repr(gs), its, mixed, callstr,
-                           round(secs; digits = 3)), ","))
+        push!(lines, join((ρ, σ, rs[ib], repr(Lr[ib]), repr(Lr[end]), repr(gc), itc, repr(secc),
+                           policy_string(actc), is_threshold(actc, delay.kind), repr(gs), its, mixed, callstr,
+                           repr(secs)), ","))
     end
-    seconds = time() - t0
+    seconds = _seconds(t0)
 
     io = IOBuffer()
     println(io, "# SimpleDelayed optimal count-based and state-based policies (sec:optimal)")
-    for (key, val) in pairs(row)
-        println(io, "# ", key, " = ", val)
+    for (k, val) in pairs(row)
+        println(io, "# ", k, " = ", val)
     end
     println(io, "# name = ", sys.name)
     println(io, "# n_components = ", n)
     println(io, "# param = ", string(Float64(model.param)))
     println(io, "# mean_batch_n = ", mean_batch(model, n))
     println(io, "# state_based = ", do_state)
-    println(io, "# seconds = ", round(seconds; digits = 3))
+    println(io, "# n_working_states = ", sum(sigfile.W))
+    println(io, "# seconds = ", repr(seconds))
+    println(io, "# seconds_rout = ", repr(seconds_rout))
+    println(io, "# seconds_tables = ", repr(seconds_tables))
+    println(io, "# seconds_states = ", repr(seconds_states))
+    println(io, "# states_cached = ", states_cached)
+    println(io, "# seconds_state_pre = ", repr(seconds_state_pre))
+    println(io, "# maxrss_mb = ", repr(round(_maxrss_mb(); digits = 1)))
     println(io, "# engine = closed forms, BigFloat ", cf.prec, " bits")
     println(io, "# engine_check_prob = ", repr(check_prob))
     println(io, "# engine_check_rel = ", repr(check_rel))
-    println(io, "# seconds_chain = ", round(seconds_chain; digits = 3))
+    println(io, "# seconds_chain = ", repr(seconds_chain))
     println(io, "# optimal_version = ", OPTIMAL_VERSION)
     println(io, "# julia_version = ", VERSION)
     println(io, "# host = ", _hostname())
@@ -752,11 +797,34 @@ function run_optimal_row(row; systems::Vector{TwoTerminalSystem}, dir::AbstractS
 end
 
 """
+    optimal_warmup(systems; state_max_n = OPT_STATE_MAX_N) -> seconds
+
+Runs `run_optimal_row` on four rows of the smallest system (LFMO-C, β = 0.2, no
+delay and the three delays with d = 0.1) in a temporary directory, which is then
+deleted, so that the timings of the production rows exclude compilation.
+"""
+function optimal_warmup(systems::Vector{TwoTerminalSystem}; state_max_n::Integer = OPT_STATE_MAX_N)
+    t0 = time_ns()
+    small = argmin(s -> ncomponents(s), systems).id
+    rows = [r for r in read_grid() if r.system == small && r.model == "LFMO-C" && r.beta == "0.2" &&
+            (r.delay_type == "none" || r.delay == "0.1")]
+    length(rows) == 4 || error("warm-up: expected 4 rows, found $(length(rows))")
+    dir = mktempdir()
+    try
+        for r in rows
+            run_optimal_row(r; systems = systems, dir = dir, state_max_n = state_max_n, cache = Dict())
+        end
+    finally
+        rm(dir; recursive = true, force = true)
+    end
+    return _seconds(t0)
+end
+
+"""
     read_optimal_output(path; versions = (OPTIMAL_VERSION,)) -> (meta, header, rows)
 
-Errors unless the file's `optimal_version` is in `versions`. Only
-scripts/summarize_optimal.jl accepts version 1, for the state-based columns of
-output/optimal_large (see README).
+Errors unless the file's `optimal_version` is in `versions`. Other versions are
+accepted only by scripts/compare_optimal.jl, which compares old and new outputs.
 """
 function read_optimal_output(path::AbstractString; versions = (OPTIMAL_VERSION,))
     meta = Dict{String,String}()
@@ -768,6 +836,8 @@ function read_optimal_output(path::AbstractString; versions = (OPTIMAL_VERSION,)
     get(meta, "optimal_version", "") in string.(versions) ||
         error("$(path): optimal_version $(get(meta, "optimal_version", "?")), expected one of $(versions)")
     header, rows = read_simple_csv(path)
-    header == OPTIMAL_HEADER || error("$(path): unexpected header")
+    expected = meta["optimal_version"] == string(OPTIMAL_VERSION) ? OPTIMAL_HEADER :
+               filter(!=("seconds_count"), OPTIMAL_HEADER)
+    header == expected || error("$(path): unexpected header")
     return (meta = meta, header = header, rows = rows)
 end

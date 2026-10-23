@@ -34,6 +34,7 @@ export Costs, repair_cost, failure_cost, call_allowed, CallTables, call_tables, 
        CountModel, count_pass, dinkelbach, is_threshold, policy_string,
        StateSpace, working_counts, StatePre, state_precompute, state_pass,
        state_calls_string, mixed_levels, rout_quantities, rout_quantities_chain, run_optimal_row, read_optimal_output,
-       OPT_RATIOS, OPT_SETUPS, OPTIMAL_DIR, OPTIMAL_LARGE_DIR, OPTIMAL_HEADER, OPTIMAL_VERSION
+       OPT_RATIOS, OPT_SETUPS, OPT_STATE_MAX_N, OPTIMAL_DIR, OPTIMAL_HEADER, OPTIMAL_VERSION,
+       optimal_warmup
 
 end # module
