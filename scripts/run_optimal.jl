@@ -9,6 +9,10 @@
 #   --min-n=K        only rows whose system has n >= K
 #   --max-n=K        only rows whose system has n <= K
 #   --rows=a:b       only row ids a..b (pilot runs)
+#   --out=DIR        write the row files to DIR (relative to the repository root)
+#                    instead of output/optimal; used for the state-based runs with
+#                    n = 30, which output/optimal must not contain
+#                    (scripts/summarize_optimal.jl refuses them)
 #   --verbose        print the time of every state-based Dinkelbach run
 #   --no-warmup      skip the warm-up (see below)
 #
@@ -42,6 +46,9 @@ function main(args)
         elseif key == "rows"
             lo, hi = parse.(Int, split(val, ':'))
             rowrange = lo:hi
+        elseif key == "out"
+            isempty(val) && error("--out needs a directory")
+            dir = abspath(val)
         elseif key == "verbose"
             verbose = true
         elseif key == "no-warmup"

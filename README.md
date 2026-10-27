@@ -160,6 +160,10 @@ computes
 - the optimal **state-based** policy (alg:state exp, alg:state det,
   alg:state fixed), which visits the 2^n states with O(n²) work each, for the 18
   systems with n ≤ `OPT_STATE_MAX_N` = 27; not for n = 30 (systems 13, 19).
+  The 32 [Exp] rows of the two n = 30 systems (5953-5968, 8929-8944) were run
+  separately on compute-fat (~1-4 days and ~107 GB per row) with
+  `--state-max-n=30 --out=output/optimal_n30`, which keeps them out of
+  `output/optimal`.
 
 The `none` delay is included as continuous inspection with D = 0 (calling the
 crew is repairing at once, and it is not allowed with no failed component).
