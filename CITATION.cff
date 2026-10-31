@@ -12,10 +12,15 @@ authors:
   - given-names: Guido
     family-names: Lagos
     affiliation: Universidad Adolfo Ibáñez, Viña del Mar, Chile
+    orcid: https://orcid.org/0000-0001-8384-2577
   - given-names: Héctor
     family-names: Olivero
     affiliation: Instituto de Ingeniería Matemática, Universidad de Valparaíso, Chile
+    orcid: https://orcid.org/0000-0003-3589-0130
 version: v1.0.0
+date-released: 2026-10-31
+doi: 10.5281/zenodo.23841153
+url: https://doi.org/10.5281/zenodo.23841153
 license:
   - MIT
   - CC-BY-4.0

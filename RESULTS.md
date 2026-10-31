@@ -1,8 +1,9 @@
 # Results of Simple-delayed v1.0.0
 
 This file is the `README.md` of the results archive
-`Simple-delayed-v1.0.0-results.tar.gz`, deposited on Zenodo together with the
-source code of release v1.0.0 of https://github.com/guidolagos/Simple-delayed.
+`Simple-delayed-v1.0.0-results.tar.gz`, deposited on Zenodo
+(https://doi.org/10.5281/zenodo.23841153) together with the source code of release v1.0.0 of
+https://github.com/guidolagos/Simple-delayed.
 These are the results that underlie the numbers of the paper
 G. Lagos and H. Olivero, "Simple repair policies with delays for systems with
 simultaneous failures: exact costs and the value of knowing which components

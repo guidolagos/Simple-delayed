@@ -28,11 +28,19 @@ This repository computes, for the 20 benchmark networks of Yeh et al. (2024),
 
 ## Archived version and citation
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23841153.svg)](https://doi.org/10.5281/zenodo.23841153)
+
 Version v1.0.0 of this repository and the results that underlie the numbers of
-the paper are archived together on Zenodo (see `CITATION.cff`). If you use the
-code or the results, please cite the archive and the paper. The results are
-not in this repository (`output/` and `logs/` are git-ignored); `RESULTS.md`
-describes the archived results file.
+the paper are archived together on Zenodo, https://doi.org/10.5281/zenodo.23841153:
+
+> G. Lagos and H. Olivero, Simple-delayed: code and results for "Simple repair
+> policies with delays for systems with simultaneous failures", version v1.0.0,
+> Zenodo, 2026. https://doi.org/10.5281/zenodo.23841153
+
+If you use the code or the results, please cite the archive and the paper
+(`CITATION.cff` has the metadata). The results are not in this repository
+(`output/` and `logs/` are git-ignored); `RESULTS.md` describes the archived
+results file.
 
 ## License
 
