@@ -106,20 +106,34 @@ compiling the package at the same time.
 
 ## From the results to the numbers of the paper
 
+With the results in `output/` (e.g. those of the Zenodo archive, extracted into
+the repository root), one command rebuilds Tables 3, 4 and 5 of the paper and the
+statistics in the text of Sections 7.5 to 7.7:
+
+    julia --project=. scripts/paper_numbers.jl
+
+It reads the row files of `output/ltmc` and `output/optimal`, the signatures in
+`data/signatures/` and the n = 30 benchmarks in `output/benchmark/`, prints the
+tables as LaTeX rows next to the statistics, and writes everything to
+`output/paper_numbers.txt` (about a minute on a laptop). The comments at its top
+state the conventions: costs, admissible triggers, savings, medians and
+percentiles with linear interpolation, and how each column of Table 5 is
+measured. The archived `paper_numbers.txt` was written by this script from the
+archived results, and every number in it agrees with the paper; the same
+numbers were also derived by an independent Python implementation.
+
+The other scripts give intermediate files:
+
 | results | script | used in the paper |
 |---|---|---|
 | `data/signatures/*.csv` | `scripts/compute_signatures.jl`, `scripts/check_signatures.jl` | Section 7.1 (systems) |
 | `output/ltmc/row_*.csv` | `scripts/summarize.jl` → `output/summary.csv` (best trigger and its saving over corrective maintenance, per row and cost pair) | Section 7.5, Table 3 |
 | `output/optimal/row_*.csv` | `scripts/summarize_optimal.jl` → `output/optimal_summary.csv` (per row and cost pair: best r-out-of-n, count- and state-based costs, and the savings `gain_*`) | Section 7.6, Table 4 |
 | `output/optimal/row_*.csv` | `scripts/summarize_optimal.jl` → `output/optimal_rows.csv` (per row: times of every step, passes, peak memory) | Section 7.7, Table 5; Supplementary Material, computational setup and computational effort |
-| `output/benchmark/*n30*.csv` | `scripts/benchmark.jl` | state-based times and memory for n = 30 (Section 7.7, Table 5; Supplementary Material) |
+| `output/benchmark/benchmark_n30_s13.csv`, `benchmark_n30_s19.csv` | `scripts/benchmark.jl` | state-based times and memory for n = 30 (Section 7.7, Table 5; Supplementary Material) |
+| `output/benchmark/benchmark_engines.csv` | `scripts/benchmark.jl` | time of the long-term mean cost of all triggers for one cost pair (Supplementary Material) |
 | all row files | `scripts/engine_check.jl` | agreement between the closed forms and the chain engine |
 
-The statistics of the paper (medians, percentiles, maxima and shares) are taken
-over the rows and cost pairs stated in each table caption, e.g. Table 4 gives the
-median and the 90th percentile of `gain_state_vs_r` over the 18 networks with
-n ≤ 27, the models with a given β, the delays of a given type and the 36 cost
-pairs with `setup` > 0, and the maximum of `gain_count_vs_r` over all networks.
 `output/summary.csv` is large and is not archived: `scripts/summarize.jl`
 rebuilds it from `output/ltmc`.
 
