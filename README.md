@@ -1,13 +1,93 @@
 # Simple-delayed
 
-Computational experiments for the paper on repair policies with delays for
-semi-coherent systems under LFMO models.
+Code and results of the computational experiments of the paper
 
-## Setup
+> G. Lagos and H. Olivero, "Simple repair policies with delays for systems with
+> simultaneous failures: exact costs and the value of knowing which components
+> failed", submitted to *Reliability Engineering & System Safety* (2026).
+
+The paper gives closed-form long-run mean costs of r-out-of-n repair policies
+with a delay between the call to the repair crew and the repair (an exponential
+or a constant delay, or a fixed inspection schedule), for semi-coherent systems
+whose components fail according to a Lévy-frailty Marshall-Olkin (LFMO) model,
+which allows simultaneous failures. It also computes the optimal policies that
+observe only the number of failed components (count-based) and those that
+observe which components have failed (state-based), to measure how much an
+r-out-of-n policy loses by ignoring which components have failed.
+
+This repository computes, for the 20 benchmark networks of Yeh et al. (2024),
+31 failure models and 16 delays (9,920 configurations):
+
+- the structural signatures of the networks (`data/signatures/`);
+- the cost-free quantities of all r-out-of-n policies, from which the long-run
+  mean cost follows for any cost pair (`output/ltmc/`);
+- the best r-out-of-n policy and the optimal count-based policy for 36 cost
+  pairs in all configurations, and the optimal state-based policy in the 8,928
+  configurations of the 18 networks with at most 27 components (`output/optimal/`);
+- the computing times of every step (`output/benchmark/` and the row files).
+
+## Archived version and citation
+
+Version v1.0.0 of this repository and the results that underlie the numbers of
+the paper are archived together on Zenodo (see `CITATION.cff`). If you use the
+code or the results, please cite the archive and the paper. The results are
+not in this repository (`output/` and `logs/` are git-ignored); `RESULTS.md`
+describes the archived results file.
+
+## License
+
+The code is released under the MIT License (`LICENSE`). The data files
+(`data/`) and the archived results are released under the Creative Commons
+Attribution 4.0 International License (CC BY 4.0). The networks in
+`data/systems/` are taken from Figure 7 of W.-C. Yeh, G. Yang, C.-L. Huang,
+"A New Node-Based Algorithm for Identifying the Complete Minimal Cut Set",
+*Electronics* 13 (2024) 603; see `data/systems/README.md`.
+
+## Requirements
+
+- Julia 1.10. The experiments of the paper were run with Julia 1.10.4.
+  The package `SimpleDelayed` uses only Julia's standard library (`BigFloat`,
+  through the MPFR library bundled with Julia), so `Manifest.toml` lists no
+  external packages.
+- Python 3 with `mpmath`, only to regenerate the reference values in
+  `test/reference/` (not needed to run the experiments or the tests).
+- For the full experiments, a Slurm cluster (`templates/`); the full state-based
+  computations need up to about 14 GB of memory per configuration for 27
+  components, and about 1,800 CPU hours in total (see the paper).
+
+## Quick start on a laptop
+
+    git clone https://github.com/guidolagos/Simple-delayed.git
+    cd Simple-delayed
     julia --project=. -e 'using Pkg; Pkg.instantiate()'
+    julia --project=. -e 'using Pkg; Pkg.test()'
 
-On the cluster, run the setup (and the tests) through `srun`, never on the
-login node:
+The tests compare both engines (below) with independent reference values and
+with each other on networks with up to 30 components, so they take a while.
+
+The first 16 rows of `data/grid.csv` are network 1 (5 components) under
+independent exponential lifetimes ([Exp]) with the 16 delays. To compute them:
+
+    julia --project=. scripts/run_experiment.jl 1 1 --rows=1:16
+    julia --project=. scripts/run_optimal.jl 1 1 --rows=1:16
+
+This writes `output/ltmc/row_00001.csv`, ..., `row_00016.csv` and
+`output/optimal/row_00001.csv`, ..., `row_00016.csv`, which can be compared
+with the same files in the archived results (the lines starting with `#`
+record times, hosts and engine checks, and differ between runs). Any other set
+of rows can be selected with `--rows=a:b`; network k owns rows
+(k-1)·496+1 to k·496.
+
+## Reproducing the experiments of the paper
+
+The sections below describe each step: signatures, r-out-of-n quantities,
+optimal policies and runtime benchmark. The Slurm templates in `templates/`
+are written for the HPC cluster of Universidad Adolfo Ibáñez (Rocky Linux,
+Slurm, Julia loaded with `module load softwares; module load
+Julia/1.10.4-linux-x86_64`, partitions `compute-slim` and `compute-fat`);
+on other clusters, change the `module` lines and the partitions.
+
+Set up the package once through `srun`, never on the login node:
 
     module purge; module load softwares; module load Julia/1.10.4-linux-x86_64
     srun --partition=compute-slim --ntasks=1 --cpus-per-task=1 --mem=2G --time=00:30:00 \
@@ -16,13 +96,42 @@ login node:
 Precompiling once before submitting an array job avoids every array task
 compiling the package at the same time.
 
-## Run tests
-    julia --project=. -e 'using Pkg; Pkg.test()'
+## From the results to the numbers of the paper
+
+| results | script | used in the paper |
+|---|---|---|
+| `data/signatures/*.csv` | `scripts/compute_signatures.jl`, `scripts/check_signatures.jl` | Section 7.1 (systems) |
+| `output/ltmc/row_*.csv` | `scripts/summarize.jl` → `output/summary.csv` (best trigger and its saving over corrective maintenance, per row and cost pair) | Section 7.5, Table 3 |
+| `output/optimal/row_*.csv` | `scripts/summarize_optimal.jl` → `output/optimal_summary.csv` (per row and cost pair: best r-out-of-n, count- and state-based costs, and the savings `gain_*`) | Section 7.6, Table 4 |
+| `output/optimal/row_*.csv` | `scripts/summarize_optimal.jl` → `output/optimal_rows.csv` (per row: times of every step, passes, peak memory) | Section 7.7, Table 5; Supplementary Material, computational setup and computational effort |
+| `output/benchmark/*n30*.csv` | `scripts/benchmark.jl` | state-based times and memory for n = 30 (Section 7.7, Table 5; Supplementary Material) |
+| all row files | `scripts/engine_check.jl` | agreement between the closed forms and the chain engine |
+
+The statistics of the paper (medians, percentiles, maxima and shares) are taken
+over the rows and cost pairs stated in each table caption, e.g. Table 4 gives the
+median and the 90th percentile of `gain_state_vs_r` over the 18 networks with
+n ≤ 27, the models with a given β, the delays of a given type and the 36 cost
+pairs with `setup` > 0, and the maximum of `gain_count_vs_r` over all networks.
+`output/summary.csv` is large and is not archived: `scripts/summarize.jl`
+rebuilds it from `output/ltmc`.
+
+## Paper references
+
+The comments in the code and the text below refer to the paper by the labels of
+its LaTeX source. In the submitted manuscript (v1.0.0 of this repository):
+
+| label | in the paper | label | in the paper |
+|---|---|---|---|
+| `thm:repairdelay` | Theorem 7 | `sec:LFMO` | Section 5 |
+| `rmk:call0` | Remark 4 | `def:lambda` | Definition 23 |
+| `def:policyindep`, `def:policydelta` | Definitions 5, 6 | `sec:optimal` | Section 6 |
+| `thm:LFMOrepairdelay` | Theorem 14 | `alg:dinkelbach` | Algorithm 1 |
+| `lem:pbbs and exps` | Lemma 16 | `rmk:count vs rout` | Remark 26 |
+| `thm:LFMO`, `thm:determinstic`, `thm:LFMOsch` | Theorems 18, 19, 20 | `sec:computational` | Section 7 |
 
 ## Structural signatures of the test systems
 
-The systems of Yeh et al. (2024) (`\cite{yeh2024new}`; Figure `fig:yeh` of
-the subsystems paper) are two-terminal networks: the **components are the
+The systems of Yeh et al. (2024) (Figure 7 of their paper) are two-terminal networks: the **components are the
 edges**, and the system works iff there is a path of working edges from
 `Start` to `End`. We use the 20 benchmark networks of Yeh et al. (2024),
 all undirected, as in their computations. `data/systems/README.md` documents
@@ -194,8 +303,8 @@ peak memory of the process when the row is finished. Each array task first runs
 four rows of system 1 in a temporary directory (`optimal_warmup`), so that the
 times exclude compilation.
 
-Versions. `# optimal_version = 3`. Version 1 (commit 2a17dba) computed the tables
-with the chain; version 2 (commit 67023db) with the closed forms, but kept the
+Versions. `# optimal_version = 3`. Version 1 (commit 85c1299) computed the tables
+with the chain; version 2 (commit 83b5a10) with the closed forms, but kept the
 state-based policies for n ≥ 21 of version 1 in a separate directory. Version 3
 computes all of them in one run, in `output/optimal/`. Readers refuse other
 versions, except `scripts/compare_optimal.jl`, which compares new and old outputs.

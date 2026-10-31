@@ -38,7 +38,7 @@ const OPT_RATIOS = COST_RATIOS
 const OPT_SETUPS = [0.05, 0.1, 0.2, 0.5]
 const OPTIMAL_DIR = joinpath(REPO_DIR, "output", "optimal")
 # Version of the row files written by `run_optimal_row`; readers refuse other versions.
-# 1: tables and r-out-of-n quantities from the survivor-count chain (commit 2a17dba).
+# 1: tables and r-out-of-n quantities from the survivor-count chain (commit 85c1299).
 # 2: from the closed forms in BigFloat, with the chain as a recorded check (engine_check_*).
 # 3: as 2, for all systems in one directory (state-based policies for n <= OPT_STATE_MAX_N),
 #    with the time of every step in full precision (seconds_rout, seconds_tables,

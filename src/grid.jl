@@ -11,7 +11,7 @@
 const GRID_PATH = joinpath(DATA_DIR, "grid.csv")
 const OUTPUT_DIR = joinpath(REPO_DIR, "output", "ltmc")
 # Version of the row files written by `run_row`; scripts refuse older outputs.
-# 1: r = 1..n (commit dbd5263). 2: adds r = 0 for exponential and deterministic delays.
+# 1: r = 1..n (commit 15ed9eb). 2: adds r = 0 for exponential and deterministic delays.
 # 3: computed with the closed forms of the paper in BigFloat (closed_forms.jl); the
 #    survivor-count chain engine is run as a check and its largest difference is
 #    recorded in the metadata (engine_check_*).

@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+message: >-
+  If you use this code or its results, please cite the archived version below
+  and the paper "Simple repair policies with delays for systems with
+  simultaneous failures: exact costs and the value of knowing which components
+  failed" by G. Lagos and H. Olivero.
+type: dataset
+title: >-
+  Simple-delayed: code and results for “Simple repair policies with delays for
+  systems with simultaneous failures”
+authors:
+  - given-names: Guido
+    family-names: Lagos
+    affiliation: Universidad Adolfo Ibáñez, Viña del Mar, Chile
+  - given-names: Héctor
+    family-names: Olivero
+    affiliation: Instituto de Ingeniería Matemática, Universidad de Valparaíso, Chile
+version: v1.0.0
+license:
+  - MIT
+  - CC-BY-4.0
+repository-code: https://github.com/guidolagos/Simple-delayed
+abstract: >-
+  Julia code, experiment grid, structural signatures and computed results of
+  the computational study of the paper “Simple repair policies with delays for
+  systems with simultaneous failures: exact costs and the value of knowing
+  which components failed”. For the 20 benchmark networks of Yeh et al.
+  (2024), 31 Lévy-frailty Marshall-Olkin failure models and 16 repair delays
+  (9,920 configurations), the code computes the exact long-run mean costs of
+  all r-out-of-n repair policies with the closed forms of the paper, the
+  optimal count-based policies, and the optimal state-based policies for the 18
+  networks with at most 27 components. The code is released under the MIT
+  License and the data and results under CC BY 4.0.
+keywords:
+  - repair policies
+  - signature
+  - common-cause failures
+  - Lévy-frailty Marshall-Olkin
+  - Markov decision process
+  - Julia
