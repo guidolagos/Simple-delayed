@@ -1,5 +1,8 @@
-# Rebuild the numbers of the computational section of the paper (Tables 3, 4 and 5, and the
-# statistics in the text of Sections 7.5 to 7.7) from the raw result files.
+# Rebuild the numbers of the computational section of the paper (the tables tab:rout,
+# tab:optimal and tab:runtimes, the statistics in the text of the subsections
+# subsec:results rout, subsec:results optimal and subsec:runtimes) and the data of its figures,
+# from the raw result files. In the version submitted in October 2026 (v1.0.0 of this
+# repository) these were Tables 3, 4 and 5 and Sections 7.5 to 7.7.
 #
 # Usage (from the repository root, with the results in output/, e.g. those of the Zenodo
 # archive; cheap, about a minute):
@@ -7,28 +10,48 @@
 #
 # Reads output/ltmc/row_*.csv (version ENGINE_VERSION), output/optimal/row_*.csv (version
 # OPTIMAL_VERSION), data/signatures/ and output/benchmark/benchmark_n30_s13.csv,
-# benchmark_n30_s19.csv, and writes everything it prints to output/paper_numbers.txt.
+# benchmark_n30_s19.csv; writes everything it prints to output/paper_numbers.txt, and the
+# data of the figures to output/figures/*.dat (whitespace-separated, one header line, read by
+# pgfplots in the LaTeX source of the paper).
 # It does not use output/summary.csv nor output/optimal_summary.csv.
 #
 # Conventions, as in the paper:
 # - long-term mean cost with c_sys = 1, LTMC(r) = (c_set + c_comp E N + P(fail)) / E T, for the
 #   cost pairs (n c_comp/c_sys, c_set/c_sys) of COST_RATIOS x COST_SETUPS; r = 0 is admissible
-#   only when c_set > 0; the best trigger is the smallest minimizer;
-# - savings: 1 - g*_r / g_corr (Table 3), 1 - g*_count / g*_r and 1 - g*_state / g*_r (Table 4);
+#   only when c_set > 0; the best trigger is the smallest minimizer; the unit of time is the
+#   mean lifetime of a component (Psi(1) = 1);
+# - savings: 1 - g*_r / g_corr (tab:rout), 1 - g*_count / g*_r and 1 - g*_state / g*_r
+#   (tab:optimal);
+# - value of information in cost units: g*_r - g*_state, in units of c_sys per unit of time,
+#   and (g*_r - g*_state) / (n c_comp), the largest cost per unit of time of monitoring the
+#   state of the components that the optimal state-based policy recovers, per component and
+#   relative to the replacement cost of a component;
 # - medians and percentiles with linear interpolation (type 7, as Statistics.quantile);
-# - Table 5: medians over the configurations of each n of seconds_rout (r-out-of-n),
+# - tab:runtimes: medians over the configurations of each n of seconds_rout (r-out-of-n),
 #   seconds_tables + the 36 seconds_count (count-based), seconds_state / iters_state over the
 #   cost pairs (one pass), mean iters_state per cost pair (passes), the 36 seconds_state
 #   (36 pairs) and maxrss_mb of the first configuration of a system in each task
 #   (states_cached = false; memory, GiB); for n = 30, the state-based values come from the
 #   one-cost-pair benchmarks, and the 36 pairs are extrapolated with the smallest and largest
 #   mean number of passes for 24 <= n <= 27.
+#
+# Figures (output/figures/; savings in %):
+# - voi_delay_beta<b>.dat, for each pairwise beta factor b in BETAS (b = 0 is [Exp]): one line
+#   per delay value d, with the median and the 90th percentile of the saving 1 - g*_state/g*_r
+#   over the 18 systems with n <= 27, the models with that beta and the 36 cost pairs, for the
+#   exponential (exp_*), constant (det_*) and inspection (insp_*) delays;
+# - voi_nodelay.dat: the same statistics without delay, one line per beta;
+# - voi_systems.dat: one line per system with n <= 27, with n, the signature mean
+#   EK = sum_k k s_k, EK / n, and the median and 90th percentile of the saving over all its
+#   state-based combinations.
 
 using SimpleDelayed
 using Printf
 
 const OUTPUT_ROOT = dirname(OPTIMAL_DIR)
 const OUT = joinpath(OUTPUT_ROOT, "paper_numbers.txt")
+const FIG_DIR = joinpath(OUTPUT_ROOT, "figures")
+const DELAY_VALUES = [0.01, 0.03, 0.1, 0.3, 1.0]
 const BENCH_N30 = [joinpath(OUTPUT_ROOT, "benchmark", "benchmark_n30_s$(s).csv") for s in (13, 19)]
 const BETAS = [0.0, 0.01, 0.05, 0.1, 0.2, 0.5]
 const DELAY_TYPES = ["none", "exp", "det", "insp"]
@@ -216,7 +239,7 @@ function main()
         round(time() - t0; digits = 1), " s.")
 
     # ---------------- Section 7.5 and Table 3
-    say("\n== Section 7.5: the best r-out-of-n policy")
+    say("\n== subsec:results rout (Section 7.5 of the submitted version): the best r-out-of-n policy")
     z = filter(x -> x.setup == 0, R)
     say("c_set = 0: best trigger r = 1 or corrective (r = n): ",
         pct(share(x -> x.r_opt == 1 || x.r_opt == x.n || x.saving <= 0, z)), "%")
@@ -246,7 +269,7 @@ function main()
     say("  r = 0 optimal in $(length(r0)) combinations, delays: ",
         join(sort(unique(["$(x.delay_type) $(x.delay)" for x in r0])), ", "))
 
-    say("\n== Table 3 (tab:rout): saving (%) of the best r-out-of-n policy over corrective maintenance,")
+    say("\n== tab:rout (Table 3 of the submitted version): saving (%) of the best r-out-of-n policy over corrective maintenance,")
     say("   median (p90) by c_set/c_sys (rows) and beta = ", join(BETAS, ", "), " (columns)")
     for σ in OPT_SETUPS
         say(rpad("\$$(σ)\$", 7), " & ",
@@ -254,7 +277,7 @@ function main()
     end
 
     # ---------------- Section 7.6 and Table 4
-    say("\n== Section 7.6: comparison with the optimal policies")
+    say("\n== subsec:results optimal (Section 7.6 of the submitted version): comparison with the optimal policies")
     gc = [1 - x.g_count / x.g_r for x in O]
     S = filter(x -> x.state, O)
     gs = [1 - x.g_state / x.g_r for x in S]
@@ -296,7 +319,7 @@ function main()
     say("  $(length(sysids)) systems, Spearman of the median saving with the signature mean sum k s_k: ",
         @sprintf("%.3f", spearman(medsys, EK)), ", with n: ", @sprintf("%.3f", spearman(medsys, nn)))
 
-    say("\n== Table 4 (tab:optimal): saving (%) of the optimal state-based policy over the best r-out-of-n")
+    say("\n== tab:optimal (Table 4 of the submitted version): saving (%) of the optimal state-based policy over the best r-out-of-n")
     say("   policy, median (p90) by delay type (rows) and beta = ", join(BETAS, ", "),
         "; last column: max saving (%) of the count-based policy (all 20 systems)")
     for dt in vcat(DELAY_TYPES, "all")
@@ -306,8 +329,12 @@ function main()
         say(rpad(get(DELAY_NAMES, dt, "All"), 12), "& ", join(cells, " & "), " & \$", pct(cmax), "\$ \\\\")
     end
 
+    # ---------------- value of information in cost units, and the data of the figures
+    value_of_information(S)
+    figure_data(S, systems)
+
     # ---------------- Section 7.7 and Table 5
-    say("\n== Table 5 (tab:runtimes): medians per configuration of each n")
+    say("\n== tab:runtimes (Table 5 of the submitted version): medians per configuration of each n")
     say(rpad("n", 4), rpad("configs", 9), rpad("r-out (ms)", 12), rpad("count36 (ms)", 14),
         rpad("pass (s)", 11), rpad("passes", 8), rpad("36 pairs (s)", 14), "memory (GB)")
     T = Dict{Int,Any}()
@@ -348,6 +375,81 @@ function main()
     mkpath(dirname(OUT))
     write(OUT, take!(LOG))
     println("\nwrote $(OUT)")
+end
+
+"Value of information of knowing which components failed, in cost units (see the header)."
+function value_of_information(S::Vector{OptRec})
+    say("\n== value of information in cost units (state-based combinations, n <= 27)")
+    say("   g*_r - g*_state in c_sys per unit of time, and (g*_r - g*_state) / (n c_comp), the")
+    say("   break-even monitoring cost per component and unit of time relative to c_comp")
+    Δ(x) = x.g_r - x.g_state
+    Δc(x) = (x.g_r - x.g_state) / x.ratio    # n c_comp = ratio, since c_sys = 1
+    stat(v) = @sprintf("median %.4f, p90 %.4f, p99 %.4f, max %.4f", med(v), quantile7(v, 0.9),
+                       quantile7(v, 0.99), maximum(v))
+    say("all: g*_r - g*_state ", stat([Δ(x) for x in S]))
+    say("all: (g*_r - g*_state) / (n c_comp) ", stat([Δc(x) for x in S]))
+    k = argmax([Δc(x) for x in S])
+    xm = S[k]
+    say("  largest (g*_r - g*_state) / (n c_comp): system $(xm.system), $(xm.model), beta = $(xm.beta), ",
+        "$(xm.delay_type) $(xm.delay), cost pair ($(xm.ratio), $(xm.setup)), relative saving ",
+        @sprintf("%.2f", 100 * (1 - xm.g_state / xm.g_r)), "%")
+    for ρ in OPT_RATIOS
+        g = filter(x -> x.ratio == ρ, S)
+        say("  n c_comp/c_sys = ", rpad(@sprintf("%.3g", ρ), 6), ": (g*_r - g*_state) / (n c_comp) median ",
+            @sprintf("%.4f", med([Δc(x) for x in g])), ", p90 ", @sprintf("%.4f", quantile7([Δc(x) for x in g], 0.9)),
+            "; g*_r - g*_state median ", @sprintf("%.4f", med([Δ(x) for x in g])))
+    end
+    for b in BETAS
+        g = filter(x -> x.beta == b, S)
+        say("  beta = ", rpad(b, 5), ": (g*_r - g*_state) / (n c_comp) median ",
+            @sprintf("%.4f", med([Δc(x) for x in g])), ", p90 ", @sprintf("%.4f", quantile7([Δc(x) for x in g], 0.9)))
+    end
+    for dt in DELAY_TYPES
+        g = filter(x -> x.delay_type == dt, S)
+        say("  delay ", rpad(dt, 5), ": (g*_r - g*_state) / (n c_comp) median ",
+            @sprintf("%.4f", med([Δc(x) for x in g])), ", p90 ", @sprintf("%.4f", quantile7([Δc(x) for x in g], 0.9)))
+    end
+end
+
+"Write the data of the figures to output/figures (see the header)."
+function figure_data(S::Vector{OptRec}, systems)
+    mkpath(FIG_DIR)
+    f2(x) = @sprintf("%.4f", x)
+    sv(g) = [100 * (1 - x.g_state / x.g_r) for x in g]
+    for b in BETAS
+        path = joinpath(FIG_DIR, "voi_delay_beta" * @sprintf("%g", 100 * b) * ".dat")
+        open(path, "w") do io
+            println(io, "d exp_med exp_p90 det_med det_p90 insp_med insp_p90")
+            for d in DELAY_VALUES
+                cols = String[]
+                for dt in ("exp", "det", "insp")
+                    v = sv(filter(x -> x.beta == b && x.delay_type == dt && x.delay == d, S))
+                    isempty(v) && error("no combinations for beta = $(b), $(dt), d = $(d)")
+                    push!(cols, f2(med(v)), f2(quantile7(v, 0.9)))
+                end
+                println(io, @sprintf("%g", d), " ", join(cols, " "))
+            end
+        end
+    end
+    open(joinpath(FIG_DIR, "voi_nodelay.dat"), "w") do io
+        println(io, "beta med p90")
+        for b in BETAS
+            v = sv(filter(x -> x.beta == b && x.delay_type == "none", S))
+            println(io, @sprintf("%g", b), " ", f2(med(v)), " ", f2(quantile7(v, 0.9)))
+        end
+    end
+    open(joinpath(FIG_DIR, "voi_systems.dat"), "w") do io
+        println(io, "system n EK EKn med p90")
+        for i in sort(unique([x.system for x in S]))
+            sys = get_system(systems, i)
+            sg = read_signature_file(signature_path(sys)).s
+            ek = Float64(sum(j * sg[j] for j in eachindex(sg)))
+            n = ncomponents(sys)
+            v = sv(filter(x -> x.system == i, S))
+            println(io, i, " ", n, " ", f2(ek), " ", f2(ek / n), " ", f2(med(v)), " ", f2(quantile7(v, 0.9)))
+        end
+    end
+    say("\nwrote the data of the figures to $(FIG_DIR)")
 end
 
 "Largest relative difference between the best r-out-of-n cost of output/ltmc and output/optimal."

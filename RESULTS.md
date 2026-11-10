@@ -26,6 +26,22 @@ copied into a clone of the repository and read by the scripts there.
 | `logs/` | Slurm logs of the runs that produced these files |
 | `SHA256SUMS` | SHA-256 checksums of all the files above |
 
+## Figure data and paper numbers of v1.0.1
+
+Version v1.0.1 of the Zenodo record keeps this archive unchanged and adds
+`Simple-delayed-v1.0.1-figures.tar.gz`, which extracts to
+`Simple-delayed-v1.0.1-figures/` with:
+
+| path | content |
+|---|---|
+| `output/paper_numbers.txt` | the tables and statistics of the computational section of the paper, including the value of information in cost units, written from the files of this archive by `scripts/paper_numbers.jl` of v1.0.1 |
+| `output/figures/*.dat` | the data of the figures of the paper, written by the same run (columns described at the top of the script) |
+| `SHA256SUMS` | SHA-256 checksums of the files above |
+
+The paper title changed in v1.0.1, to "How much is it worth to know which
+components failed? Exact costs of simple repair policies with delays under
+simultaneous failures"; the results did not change.
+
 The columns of the row files are described in the repository's `README.md`
 (sections "LTMC experiments" and "Optimal policies"). The lines starting with
 `#` record the configuration, the engine version, the largest difference

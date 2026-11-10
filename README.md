@@ -2,9 +2,9 @@
 
 Code and results of the computational experiments of the paper
 
-> G. Lagos and H. Olivero, "Simple repair policies with delays for systems with
-> simultaneous failures: exact costs and the value of knowing which components
-> failed", submitted to *Reliability Engineering & System Safety* (2026).
+> G. Lagos and H. Olivero, "How much is it worth to know which components failed?
+> Exact costs of simple repair policies with delays under simultaneous
+> failures", in preparation (2026).
 
 The paper gives closed-form long-run mean costs of r-out-of-n repair policies
 with a delay between the call to the repair crew and the repair (an exponential
@@ -107,30 +107,36 @@ compiling the package at the same time.
 ## From the results to the numbers of the paper
 
 With the results in `output/` (e.g. those of the Zenodo archive, extracted into
-the repository root), one command rebuilds Tables 3, 4 and 5 of the paper and the
-statistics in the text of Sections 7.5 to 7.7:
+the repository root), one command rebuilds the tables of the computational
+section of the paper, the statistics in its text and the data of its figures:
 
     julia --project=. scripts/paper_numbers.jl
 
 It reads the row files of `output/ltmc` and `output/optimal`, the signatures in
 `data/signatures/` and the n = 30 benchmarks in `output/benchmark/`, prints the
 tables as LaTeX rows next to the statistics, and writes everything to
-`output/paper_numbers.txt` (about a minute on a laptop). The comments at its top
-state the conventions: costs, admissible triggers, savings, medians and
-percentiles with linear interpolation, and how each column of Table 5 is
-measured. The archived `paper_numbers.txt` was written by this script from the
-archived results, and every number in it agrees with the paper; the same
-numbers were also derived by an independent Python implementation.
+`output/paper_numbers.txt` (about a minute on a laptop). It also writes the data
+of the figures of the paper to `output/figures/*.dat` (plain text tables, read by
+pgfplots in the LaTeX source of the paper, so the figures are drawn directly from
+these files). The comments at its top state the conventions: costs, admissible
+triggers, savings, the value of information in cost units, medians and
+percentiles with linear interpolation, how each column of the table of
+computing times is measured, and the columns of each figure file. The output of
+the script refers to the tables and subsections of the paper by their LaTeX
+labels (below). The `paper_numbers.txt` of v1.0.0 was written by the v1.0.0
+version of this script from the archived results, and every number in it agrees
+with the manuscript of October 2026; the same numbers were also derived by an
+independent Python implementation.
 
 The other scripts give intermediate files:
 
 | results | script | used in the paper |
 |---|---|---|
-| `data/signatures/*.csv` | `scripts/compute_signatures.jl`, `scripts/check_signatures.jl` | Section 7.1 (systems) |
-| `output/ltmc/row_*.csv` | `scripts/summarize.jl` → `output/summary.csv` (best trigger and its saving over corrective maintenance, per row and cost pair) | Section 7.5, Table 3 |
-| `output/optimal/row_*.csv` | `scripts/summarize_optimal.jl` → `output/optimal_summary.csv` (per row and cost pair: best r-out-of-n, count- and state-based costs, and the savings `gain_*`) | Section 7.6, Table 4 |
-| `output/optimal/row_*.csv` | `scripts/summarize_optimal.jl` → `output/optimal_rows.csv` (per row: times of every step, passes, peak memory) | Section 7.7, Table 5; Supplementary Material, computational setup and computational effort |
-| `output/benchmark/benchmark_n30_s13.csv`, `benchmark_n30_s19.csv` | `scripts/benchmark.jl` | state-based times and memory for n = 30 (Section 7.7, Table 5; Supplementary Material) |
+| `data/signatures/*.csv` | `scripts/compute_signatures.jl`, `scripts/check_signatures.jl` | `subsec:systems` |
+| `output/ltmc/row_*.csv` | `scripts/summarize.jl` → `output/summary.csv` (best trigger and its saving over corrective maintenance, per row and cost pair) | `subsec:results rout`, `tab:rout` |
+| `output/optimal/row_*.csv` | `scripts/summarize_optimal.jl` → `output/optimal_summary.csv` (per row and cost pair: best r-out-of-n, count- and state-based costs, and the savings `gain_*`) | `subsec:results optimal`, `tab:optimal` |
+| `output/optimal/row_*.csv` | `scripts/summarize_optimal.jl` → `output/optimal_rows.csv` (per row: times of every step, passes, peak memory) | `subsec:runtimes`, `tab:runtimes`; Supplementary Material, computational setup and computational effort |
+| `output/benchmark/benchmark_n30_s13.csv`, `benchmark_n30_s19.csv` | `scripts/benchmark.jl` | state-based times and memory for n = 30 (`subsec:runtimes`, `tab:runtimes`; Supplementary Material) |
 | `output/benchmark/benchmark_engines.csv` | `scripts/benchmark.jl` | time of the long-term mean cost of all triggers for one cost pair (Supplementary Material) |
 | all row files | `scripts/engine_check.jl` | agreement between the closed forms and the chain engine |
 
@@ -140,16 +146,20 @@ rebuilds it from `output/ltmc`.
 ## Paper references
 
 The comments in the code and the text below refer to the paper by the labels of
-its LaTeX source. In the submitted manuscript (v1.0.0 of this repository):
+its LaTeX source, which do not change between versions of the manuscript (the
+numbers of the theorems and sections do):
 
-| label | in the paper | label | in the paper |
-|---|---|---|---|
-| `thm:repairdelay` | Theorem 7 | `sec:LFMO` | Section 5 |
-| `rmk:call0` | Remark 4 | `def:lambda` | Definition 23 |
-| `def:policyindep`, `def:policydelta` | Definitions 5, 6 | `sec:optimal` | Section 6 |
-| `thm:LFMOrepairdelay` | Theorem 14 | `alg:dinkelbach` | Algorithm 1 |
-| `lem:pbbs and exps` | Lemma 16 | `rmk:count vs rout` | Remark 26 |
-| `thm:LFMO`, `thm:determinstic`, `thm:LFMOsch` | Theorems 18, 19, 20 | `sec:computational` | Section 7 |
+| label | content |
+|---|---|
+| `def:policyindep`, `def:policydelta` | r-out-of-n policies with continuous inspection and an independent delay, and with a fixed inspection schedule |
+| `rmk:call0` | the trigger r = 0 (the crew is called right after each repair) |
+| `thm:repairdelay` | signature decompositions of the first repair cycle |
+| `sec:LFMO`, `def:lambda` | the Lévy-frailty Marshall-Olkin (LFMO) model and its shock rates |
+| `thm:LFMOrepairdelay` | long-term mean cost of the r-out-of-n policies |
+| `lem:pbbs and exps` | probabilities and expectations of the LFMO model |
+| `thm:LFMO`, `thm:determinstic`, `thm:LFMOsch` | closed forms for exponential and constant delays and for fixed inspection times |
+| `sec:optimal`, `alg:dinkelbach`, `rmk:count vs rout` | optimal count-based and state-based policies, Dinkelbach's method, and when count-based policies reduce to r-out-of-n ones |
+| `sec:computational` | computational study |
 
 ## Structural signatures of the test systems
 

@@ -1,13 +1,13 @@
 cff-version: 1.2.0
 message: >-
   If you use this code or its results, please cite the archived version below
-  and the paper "Simple repair policies with delays for systems with
-  simultaneous failures: exact costs and the value of knowing which components
-  failed" by G. Lagos and H. Olivero.
+  and the paper "How much is it worth to know which components failed? Exact
+  costs of simple repair policies with delays under simultaneous failures" by
+  G. Lagos and H. Olivero.
 type: dataset
 title: >-
-  Simple-delayed: code and results for “Simple repair policies with delays for
-  systems with simultaneous failures”
+  Simple-delayed: code and results for “How much is it worth to know which
+  components failed?”
 authors:
   - given-names: Guido
     family-names: Lagos
@@ -27,9 +27,9 @@ license:
 repository-code: https://github.com/guidolagos/Simple-delayed
 abstract: >-
   Julia code, experiment grid, structural signatures and computed results of
-  the computational study of the paper “Simple repair policies with delays for
-  systems with simultaneous failures: exact costs and the value of knowing
-  which components failed”. For the 20 benchmark networks of Yeh et al.
+  the computational study of the paper “How much is it worth to know which
+  components failed? Exact costs of simple repair policies with delays under
+  simultaneous failures”. For the 20 benchmark networks of Yeh et al.
   (2024), 31 Lévy-frailty Marshall-Olkin failure models and 16 repair delays
   (9,920 configurations), the code computes the exact long-run mean costs of
   all r-out-of-n repair policies with the closed forms of the paper, the
