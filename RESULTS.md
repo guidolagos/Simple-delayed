@@ -28,7 +28,8 @@ copied into a clone of the repository and read by the scripts there.
 
 ## Figure data and paper numbers of v1.0.1
 
-Version v1.0.1 of the Zenodo record keeps this archive unchanged and adds
+Version v1.0.1 of the Zenodo record (https://doi.org/10.5281/zenodo.24110712)
+keeps this archive unchanged and adds
 `Simple-delayed-v1.0.1-figures.tar.gz`, which extracts to
 `Simple-delayed-v1.0.1-figures/` with:
 

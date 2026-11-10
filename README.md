@@ -28,14 +28,20 @@ This repository computes, for the 20 benchmark networks of Yeh et al. (2024),
 
 ## Archived version and citation
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23841153.svg)](https://doi.org/10.5281/zenodo.23841153)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24110712.svg)](https://doi.org/10.5281/zenodo.24110712)
 
-Version v1.0.0 of this repository and the results that underlie the numbers of
-the paper are archived together on Zenodo, https://doi.org/10.5281/zenodo.23841153:
+Version v1.0.1 of this repository, the results that underlie the numbers of the
+paper and the data of its figures are archived together on Zenodo,
+https://doi.org/10.5281/zenodo.24110712:
 
-> G. Lagos and H. Olivero, Simple-delayed: code and results for "Simple repair
-> policies with delays for systems with simultaneous failures", version v1.0.0,
-> Zenodo, 2026. https://doi.org/10.5281/zenodo.23841153
+> G. Lagos and H. Olivero, Simple-delayed: code and results for "How much is it
+> worth to know which components failed?", version v1.0.1, Zenodo, 2026.
+> https://doi.org/10.5281/zenodo.24110712
+
+Version v1.0.1 has the same results as v1.0.0
+(https://doi.org/10.5281/zenodo.23841153, which accompanied the manuscript of
+October 2026), and adds the figure data and the value of information in cost
+units written by `scripts/paper_numbers.jl`.
 
 If you use the code or the results, please cite the archive and the paper
 (`CITATION.cff` has the metadata). The results are not in this repository
