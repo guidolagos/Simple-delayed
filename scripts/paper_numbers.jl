@@ -374,7 +374,7 @@ function main()
 
     mkpath(dirname(OUT))
     write(OUT, take!(LOG))
-    println("\nwrote $(OUT)")
+    println("\nwrote ", relpath(OUT, dirname(OUTPUT_ROOT)))
 end
 
 "Value of information of knowing which components failed, in cost units (see the header)."
@@ -449,7 +449,7 @@ function figure_data(S::Vector{OptRec}, systems)
             println(io, i, " ", n, " ", f2(ek), " ", f2(ek / n), " ", f2(med(v)), " ", f2(quantile7(v, 0.9)))
         end
     end
-    say("\nwrote the data of the figures to $(FIG_DIR)")
+    say("\nwrote the data of the figures to ", relpath(FIG_DIR, dirname(OUTPUT_ROOT)))   # relative to the repository root
 end
 
 "Largest relative difference between the best r-out-of-n cost of output/ltmc and output/optimal."
